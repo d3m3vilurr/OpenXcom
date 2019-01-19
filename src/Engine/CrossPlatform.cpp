@@ -67,7 +67,9 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <pwd.h>
+#ifndef __vita__
 #include <execinfo.h>
+#endif
 #include "Unicode.h"
 #endif
 #include <SDL.h>
@@ -912,6 +914,10 @@ void setWindowIcon(int, const std::string &unixPath)
  */
 void stackTrace(void *ctx)
 {
+#ifdef __vita__
+	Log(LOG_FATAL) << "Unfortunately, no stack trace information is available";
+    return;
+#else
 #ifdef _WIN32
 #ifndef __NO_DBGHELP
 	const int MAX_SYMBOL_LENGTH = 1024;
@@ -1053,6 +1059,7 @@ void stackTrace(void *ctx)
 	free(strings);
 #endif
 	ctx = (void*)ctx;
+#endif
 }
 
 /**

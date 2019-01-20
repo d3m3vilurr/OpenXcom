@@ -462,8 +462,13 @@ if ( FORCE_INSTALL_DATA_TO_BIN )
   set ( data_install_dir bin )
 endif ()
 
-add_executable ( openxcom  ${application_type} ${openxcom_src} ${openxcom_icon} )
-install ( TARGETS openxcom ${install_dest} DESTINATION ${CMAKE_INSTALL_BINDIR} )
+if ( NOT PSP2 )
+  add_executable ( openxcom  ${application_type} ${openxcom_src} ${openxcom_icon} )
+  install ( TARGETS openxcom ${install_dest} DESTINATION ${CMAKE_INSTALL_BINDIR} )
+else ()
+  add_executable ( ${PROJECT_NAME} ${application_type} ${openxcom_src} ${openxcom_icon} )
+endif ()
+
 # Extra link flags for Windows. They need to be set before the SDL/YAML link flags, otherwise you will get strange link errors ('Undefined reference to WinMain@16')
 if ( WIN32 )
   set ( basic_windows_libs advapi32.lib shell32.lib shlwapi.lib )
@@ -484,7 +489,35 @@ if (${CMAKE_SYSTEM_NAME} MATCHES FreeBSD OR ${CMAKE_SYSTEM_NAME} MATCHES NetBSD 
   set ( system_libs -lexecinfo )
 endif ()
 
-target_link_libraries ( openxcom ${system_libs} ${SDLIMAGE_LIBRARY} ${SDLMIXER_LIBRARY} ${SDLGFX_LIBRARY} ${SDL_LIBRARY} ${OPENGL_LIBRARIES} debug ${YAMLCPP_LIBRARY_DEBUG} optimized ${YAMLCPP_LIBRARY} )
+if ( NOT PSP2 )
+  target_link_libraries ( openxcom ${system_libs} ${SDLIMAGE_LIBRARY} ${SDLMIXER_LIBRARY} ${SDLGFX_LIBRARY} ${SDL_LIBRARY} ${OPENGL_LIBRARIES} debug ${YAMLCPP_LIBRARY_DEBUG} optimized ${YAMLCPP_LIBRARY} )
+else ()
+  target_link_libraries ( ${PROJECT_NAME}
+                          ${system_libs}
+                          ${SDLIMAGE_LIBRARY}
+                          ${SDLMIXER_LIBRARY}
+                          ${SDLGFX_LIBRARY}
+                          ${SDL_LIBRARY}
+                          ${YAMLCPP_LIBRARY}
+                          archive
+                          c
+                          vita2d
+                          turbojpeg
+                          png
+                          ogg
+                          vorbis
+                          vorbisidec
+                          vorbisfile
+                          mikmod
+                          SceHid_stub
+                          SceCtrl_stub
+                          SceGxm_stub
+                          SceCommonDialog_stub
+                          SceSysmodule_stub
+                          SceDisplay_stub
+                          SceAudio_stub
+                          z)
+endif ()
 
 # Pack libraries into bundle and link executable appropriately
 if ( APPLE AND CREATE_BUNDLE )
@@ -499,11 +532,13 @@ foreach ( binpath ${bin_data_dirs} )
       POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/bin/${binpath} ${bundle_path}/Contents/Resources/${binpath}
 	  VERBATIM )
-  else ()
+  elseif ( NOT PSP2 )
     add_custom_command ( TARGET openxcom
       POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/bin/${binpath} ${EXECUTABLE_OUTPUT_PATH}/${binpath}
 	  VERBATIM )
+  else ()
+    set ( EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR} )
   endif ()
   install ( DIRECTORY ${CMAKE_SOURCE_DIR}/bin/${binpath} DESTINATION ${data_install_dir} )
 endforeach()

@@ -100,7 +100,11 @@ inline SeverityLevel& Logger::reportingLevel()
 
 inline std::string& Logger::logFile()
 {
+#ifndef __vita__
 	static std::string logFile = "openxcom.log";
+#else
+	static std::string logFile = "ux0:/data/openxcom/openxcom.log";
+#endif
 	return logFile;
 }
 

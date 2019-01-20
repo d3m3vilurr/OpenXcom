@@ -187,11 +187,14 @@ if ( BUILD_PACKAGE )
   include ( nsis )
   include ( apple )
   include ( CPack )
+  include ( vita )
   message ( "version:${CPACK_PACKAGE_VERSION_MAJOR}.${CPACK_PACKAGE_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}"
 )
 endif()
 
-if ( NOT WIN32 )
+if ( PSP2 )
+  message ( "this mode is psp2!" )
+elseif ( NOT WIN32 )
   install(FILES "${CMAKE_SOURCE_DIR}/res/linux/openxcom.desktop"
     DESTINATION "${CMAKE_INSTALL_FULL_DATAROOTDIR}/applications")
   install(FILES "${CMAKE_SOURCE_DIR}/res/linux/icons/openxcom_48x48.png"

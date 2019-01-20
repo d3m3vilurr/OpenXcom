@@ -139,6 +139,7 @@ void showError(const std::string &error)
  */
 static char const *getHome()
 {
+#ifndef __vita__
 	char const *home = getenv("HOME");
 	if (!home)
 	{
@@ -146,6 +147,11 @@ static char const *getHome()
 		home = pwd->pw_dir;
 	}
 	return home;
+#else
+    // TODO: if this dir does not exist, we must make the new dir
+    // otherwise will crash process
+    return "ux0:/data/openxcom";
+#endif
 }
 #endif
 
@@ -186,13 +192,20 @@ std::vector<std::string> findDataFolders()
 	}
 #else
 	char const *home = getHome();
+	char path[MAXPATHLEN];
+
+#ifdef __vita__
+    snprintf(path, MAXPATHLEN, "%s/data/", home);
+    list.push_back(path);
+    return list;
+#endif
+
 #ifdef __HAIKU__
 	char data_path[B_PATH_NAME_LENGTH];
 	find_directory(B_SYSTEM_SETTINGS_DIRECTORY, 0, true, data_path, sizeof(data_path)-strlen("/OpenXcom/"));
 	strcat(data_path,"/OpenXcom/");
 	list.push_back(data_path);
 #endif
-	char path[MAXPATHLEN];
 
 	// Get user-specific data folders
 	if (char const *const xdg_data_home = getenv("XDG_DATA_HOME"))
@@ -286,6 +299,12 @@ std::vector<std::string> findUserFolders()
 	char const *home = getHome();
 	char path[MAXPATHLEN];
 
+#ifdef __vita__
+    snprintf(path, MAXPATHLEN, "%s/", home);
+    list.push_back(path);
+    return list;
+#endif
+
 	// Get user folders
 	if (char const *const xdg_data_home = getenv("XDG_DATA_HOME"))
  	{
@@ -329,6 +348,11 @@ std::string findConfigFolder()
 	find_directory(B_USER_SETTINGS_DIRECTORY, 0, true, settings_path, sizeof(settings_path)-strlen("/OpenXcom/"));
 	strcat(settings_path,"/OpenXcom/");
 	return settings_path;
+#elif defined (__vita__)
+	char const *home = getHome();
+	char path[MAXPATHLEN];
+    snprintf(path, MAXPATHLEN, "%s/config/", home);
+    return path;
 #else
 	char const *home = getHome();
 	char path[MAXPATHLEN];
@@ -421,9 +445,13 @@ bool createFolder(const std::string &path)
 	else
 		return true;
 #else
+#ifndef __vita__
 	mode_t process_mask = umask(0);
 	int result = mkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 	umask(process_mask);
+#else
+	int result = sceIoMkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+#endif
 	if (result == 0)
 		return true;
 	else

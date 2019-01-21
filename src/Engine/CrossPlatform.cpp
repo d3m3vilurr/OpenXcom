@@ -79,6 +79,10 @@
 #include <StorageDefs.h>
 #endif
 
+#ifdef __vita__
+unsigned int _newlib_heap_size_user = 128 * 1024 * 1024;
+#endif
+
 namespace OpenXcom
 {
 namespace CrossPlatform

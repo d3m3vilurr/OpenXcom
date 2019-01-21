@@ -66,8 +66,13 @@ void create()
 	_info.push_back(OptionInfo("asyncBlit", &asyncBlit, false));
 	_info.push_back(OptionInfo("keyboardMode", (int*)&keyboardMode, KEYBOARD_OFF));
 #else
+#ifdef __vita__
+	_info.push_back(OptionInfo("displayWidth", &displayWidth, 960));
+	_info.push_back(OptionInfo("displayHeight", &displayHeight, 544));
+#else
 	_info.push_back(OptionInfo("displayWidth", &displayWidth, Screen::ORIGINAL_WIDTH*2));
 	_info.push_back(OptionInfo("displayHeight", &displayHeight, Screen::ORIGINAL_HEIGHT*2));
+#endif
 	_info.push_back(OptionInfo("fullscreen", &fullscreen, false));
 	_info.push_back(OptionInfo("asyncBlit", &asyncBlit, true));
 	_info.push_back(OptionInfo("keyboardMode", (int*)&keyboardMode, KEYBOARD_ON));

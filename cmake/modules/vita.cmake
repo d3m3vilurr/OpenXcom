@@ -1,4 +1,4 @@
-if ( DEFINED ENV{VITASDK} )
+if ( PSP2 )
   include ( "${VITASDK}/share/vita.cmake" REQUIRED )
 
   set ( VITA_APP_NAME "OpenXcom" )

@@ -19,6 +19,7 @@
  */
 #include "../Engine/InteractiveSurface.h"
 #include "../Engine/Options.h"
+#include "../Mod/MapData.h"
 #include "Position.h"
 #include <vector>
 
@@ -36,8 +37,11 @@ class Camera;
 class Timer;
 class Text;
 class Tile;
+class UnitSprite;
 
 enum CursorType { CT_NONE, CT_NORMAL, CT_AIM, CT_PSI, CT_WAYPOINT, CT_THROW };
+enum TilePart : int;
+
 /**
  * Interactive map of the battlescape.
  */
@@ -45,16 +49,29 @@ class Map : public InteractiveSurface
 {
 private:
 	static const int SCROLL_INTERVAL = 15;
+	static const int FADE_INTERVAL = 23;
+	static const int NIGHT_VISION_SHADE = 4;
 	static const int BULLET_SPRITES = 35;
 	Timer *_scrollMouseTimer, *_scrollKeyTimer, *_obstacleTimer;
+	Timer *_fadeTimer;
+	int _fadeShade;
+	bool _nightVisionOn;
+	int _debugVisionMode;
+	int _nvColor;
 	Game *_game;
 	SavedBattleGame *_save;
 	Surface *_arrow;
+	Surface *_stunIndicator, *_woundIndicator, *_burnIndicator, *_shockIndicator;
+	bool _anyIndicator, _isAltPressed;
 	int _spriteWidth, _spriteHeight;
 	int _selectorX, _selectorY;
 	int _mouseX, _mouseY;
 	CursorType _cursorType;
 	int _cursorSize;
+	int _cacheActiveWeaponUfopediaArticleUnlocked; // -1 = unknown, 0 = locked, 1 = unlocked
+	bool _cacheIsCtrlPressed;
+	Position _cacheCursorPosition;
+	int _cacheHasLOS; // -1 = unknown, 0 = no LOS, 1 = has LOS
 	int _animFrame;
 	Projectile *_projectile;
 	bool _projectileInFOV;
@@ -65,13 +82,15 @@ private:
 	int _visibleMapHeight;
 	std::vector<Position> _waypoints;
 	bool _unitDying, _smoothCamera, _smoothingEngaged, _flashScreen;
+	int _bgColor;
 	PathPreview _previewSetting;
 	Text *_txtAccuracy;
 	SurfaceSet *_projectileSet;
 
-	void drawUnit(Surface *surface, Tile *unitTile, Tile *currTile, Position tileScreenPosition, int shade, int obstacleShade, bool topLayer);
+	void drawUnit(UnitSprite &unitSprite, Tile *unitTile, Tile *currTile, Position tileScreenPosition, int shade, int obstacleShade, bool topLayer);
 	void drawTerrain(Surface *surface);
 	int getTerrainLevel(const Position& pos, int size) const;
+	int getWallShade(TilePart part, Tile* tileFrot, Tile* tileBehind);
 	int _iconHeight, _iconWidth, _messageColor;
 	const std::vector<Uint8> *_transparencies;
 	bool _showObstacles;
@@ -83,21 +102,24 @@ public:
 	/// Initializes the map.
 	void init();
 	/// Handles timers.
-	void think();
+	void think() override;
 	/// Draws the surface.
-	void draw();
+	void draw() override;
 	/// Sets the palette.
-	void setPalette(SDL_Color *colors, int firstcolor = 0, int ncolors = 256);
+	void setPalette(const SDL_Color *colors, int firstcolor = 0, int ncolors = 256) override;
 	/// Special handling for mouse press.
-	void mousePress(Action *action, State *state);
+	void mousePress(Action *action, State *state) override;
 	/// Special handling for mouse release.
-	void mouseRelease(Action *action, State *state);
+	void mouseRelease(Action *action, State *state) override;
+	/// Special handling for mousewheel events.
+	void mouseWheel(Action *action, State *state) override;
 	/// Special handling for mouse over
-	void mouseOver(Action *action, State *state);
+	void mouseOver(Action *action, State *state) override;
+	void fingerMotion(Action *action, State *state) override;
 	/// Special handling for key presses.
-	void keyboardPress(Action *action, State *state);
+	void keyboardPress(Action *action, State *state) override;
 	/// Special handling for key releases.
-	void keyboardRelease(Action *action, State *state);
+	void keyboardRelease(Action *action, State *state) override;
 	/// Rotates the tileframes 0-7
 	void animate(bool redraw);
 	/// Sets the battlescape selector position relative to mouseposition.
@@ -110,10 +132,6 @@ public:
 	void setCursorType(CursorType type, int size = 1);
 	/// Gets the 3D cursor type.
 	CursorType getCursorType() const;
-	/// Caches units.
-	void cacheUnits();
-	/// Caches the unit.
-	void cacheUnit(BattleUnit *unit);
 	/// Sets projectile.
 	void setProjectile(Projectile *projectile);
 	/// Gets projectile.
@@ -126,6 +144,8 @@ public:
 	void scrollMouse();
 	/// Keyboard-scrolls the camera.
 	void scrollKey();
+	/// fades in/out
+	void fadeShade();
 	/// Get waypoints vector.
 	std::vector<Position> *getWaypoints();
 	/// Set mouse-buttons' pressed state.
@@ -135,9 +155,9 @@ public:
 	/// Refreshes the battlescape selector after scrolling.
 	void refreshSelectorPosition();
 	/// Special handling for updating map height.
-	void setHeight(int height);
+	void setHeight(int height) override;
 	/// Special handling for updating map width.
-	void setWidth(int width);
+	void setWidth(int width) override;
 	/// Get the vertical position of the hidden movement screen.
 	int getMessageY() const;
 	/// Get the icon height.
@@ -152,6 +172,11 @@ public:
 	void setBlastFlash(bool flash);
 	/// Check if the screen is flashing this.
 	bool getBlastFlash() const;
+	/// Modify shade for fading
+	int reShade(Tile *tile);
+	/// toggle the night-vision mode
+	void toggleNightVision();
+	void toggleDebugVisionMode();
 	/// Resets obstacle markers.
 	void resetObstacles();
 	/// Enables obstacle markers.

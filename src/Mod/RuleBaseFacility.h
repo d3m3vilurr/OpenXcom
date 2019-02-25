@@ -19,12 +19,15 @@
  */
 #include <string>
 #include <vector>
+#include <map>
 #include <yaml-cpp/yaml.h>
+#include "MapScript.h"
 
 namespace OpenXcom
 {
 
 class Mod;
+class Position;
 
 /**
  * Represents a specific type of base facility.
@@ -36,14 +39,28 @@ class RuleBaseFacility
 {
 private:
 	std::string _type;
-	std::vector<std::string> _requires;
+	std::vector<std::string> _requires, _requiresBaseFunc, _provideBaseFunc, _forbiddenBaseFunc;
 	int _spriteShape, _spriteFacility;
+	int _missileAttraction;
 	bool _lift, _hyper, _mind, _grav;
-	int _size, _buildCost, _buildTime, _monthlyCost;
+	int _size, _buildCost, _refundValue, _buildTime, _monthlyCost;
+	std::map<std::string, std::pair<int, int> > _buildCostItems;
 	int _storage, _personnel, _aliens, _crafts, _labs, _workshops, _psiLabs;
 	int _radarRange, _radarChance, _defense, _hitRatio, _fireSound, _hitSound;
 	std::string _mapName;
-	int _listOrder;
+	int _listOrder, _trainingRooms;
+	int _maxAllowedPerBase;
+	float _sickBayAbsoluteBonus, _sickBayRelativeBonus;
+	int _prisonType;
+	int _rightClickActionType;
+	std::vector<VerticalLevel> _verticalLevels;
+	std::vector<std::string> _leavesBehindOnSell;
+	int _removalTime;
+	bool _canBeBuiltOver;
+	std::vector<std::string> _buildOverFacilities;
+	std::vector<Position> _storageTiles;
+	std::string _destroyedFacilityName;
+	RuleBaseFacility* _destroyedFacility;
 public:
 	/// Creates a blank facility ruleset.
 	RuleBaseFacility(const std::string &type);
@@ -51,16 +68,26 @@ public:
 	~RuleBaseFacility();
 	/// Loads the facility from YAML.
 	void load(const YAML::Node& node, Mod *mod, int listOrder);
+	/// Cross link with other rules.
+	void afterLoad(const Mod* mod);
 	/// Gets the facility's type.
 	std::string getType() const;
 	/// Gets the facility's requirements.
 	const std::vector<std::string> &getRequirements() const;
+	/// Gets the facility's required function in base to build.
+	const std::vector<std::string> &getRequireBaseFunc() const;
+	/// Gets the functions that facility provide in base.
+	const std::vector<std::string> &getProvidedBaseFunc() const;
+	/// Gets the functions that facility prevent in base.
+	const std::vector<std::string> &getForbiddenBaseFunc() const;
 	/// Gets the facility's shape sprite.
 	int getSpriteShape() const;
 	/// Gets the facility's content sprite.
 	int getSpriteFacility() const;
 	/// Gets the facility's size.
 	int getSize() const;
+	/// Gets the facility's missile attraction.
+	int getMissileAttraction() const { return _missileAttraction; }
 	/// Gets if the facility is an access lift.
 	bool isLift() const;
 	/// Gets if the facility has hyperwave detection.
@@ -71,6 +98,10 @@ public:
 	bool isGravShield() const;
 	/// Gets the facility's construction cost.
 	int getBuildCost() const;
+	/// Gets the facility's refund value.
+	int getRefundValue() const;
+	/// Gets the facility's construction cost in items, `first` is build cost, `second` is refund.
+	const std::map<std::string, std::pair<int, int> >& getBuildCostItems() const;
 	/// Gets the facility's construction time.
 	int getBuildTime() const;
 	/// Gets the facility's monthly cost.
@@ -105,6 +136,32 @@ public:
 	int getHitSound() const;
 	/// Gets the facility's list weight.
 	int getListOrder() const;
+	/// Gets the facility's training capacity.
+	int getTrainingFacilities() const;
+	/// Gets the maximum allowed number of facilities per base.
+	int getMaxAllowedPerBase() const;
+	/// Gets the facility's bonus to hp healed.
+	float getSickBayAbsoluteBonus() const;
+	/// Gets the facility's bonus to hp healed (as percentage of max hp of the soldier).
+	float getSickBayRelativeBonus() const;
+	/// Gets the prison type.
+	int getPrisonType() const;
+	/// Gets the action type to perform on right click.
+	int getRightClickActionType() const;
+	/// Gets the vertical levels for this facility map generation.
+	const std::vector<VerticalLevel> &getVerticalLevels() const;
+	/// Gets the facility left behind when this one is sold
+	const std::vector<std::string> &getLeavesBehindOnSell() const;
+	/// Gets how long facilities left behind when this one is sold should take to build
+	int getRemovalTime() const;
+	/// Gets whether or not this facility can be built over by other ones
+	bool getCanBeBuiltOver() const;
+	/// Gets which facilities are allowed to be replaced by this building
+	const std::vector<std::string> &getBuildOverFacilities() const;
+	/// Gets a list of which tiles are used to place items stored in this facility
+	const std::vector<Position> &getStorageTiles() const;
+	/// Gets the ruleset for the destroyed version of this facility.
+	RuleBaseFacility* getDestroyedFacility() const;
 };
 
 }

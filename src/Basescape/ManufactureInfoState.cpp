@@ -93,10 +93,10 @@ void ManufactureInfoState::buildUi()
 	_txtTodo = new Text(40, 16, 280, 88);
 
 	_surfaceEngineers = new InteractiveSurface(160, 150, 0, 25);
-	_surfaceEngineers->onMouseClick((ActionHandler)&ManufactureInfoState::handleWheelEngineer, 0);
+	_surfaceEngineers->onMouseWheel((ActionHandler)&ManufactureInfoState::handleWheelEngineer);
 
 	_surfaceUnits = new InteractiveSurface(160, 150, 160, 25);
-	_surfaceUnits->onMouseClick((ActionHandler)&ManufactureInfoState::handleWheelUnit, 0);
+	_surfaceUnits->onMouseWheel((ActionHandler)&ManufactureInfoState::handleWheelUnit);
 
 	// Set palette
 	setInterface("manufactureInfo");
@@ -178,7 +178,21 @@ void ManufactureInfoState::buildUi()
 	_btnOk->onKeyboardPress((ActionHandler)&ManufactureInfoState::btnOkClick, Options::keyOk);
 	_btnOk->onKeyboardPress((ActionHandler)&ManufactureInfoState::btnOkClick, Options::keyCancel);
 
-	_btnStop->setText(tr("STR_STOP_PRODUCTION"));
+	if (!_item && _production)
+	{
+		if (_production->getRules()->getRefund())
+		{
+			_btnStop->setText(tr("STR_REFUND_PRODUCTION"));
+		}
+		else
+		{
+			_btnStop->setText(tr("STR_STOP_PRODUCTION"));
+		}
+	}
+	else
+	{
+		_btnStop->setText(tr("STR_CANCEL_UC"));
+	}
 	_btnStop->onMouseClick((ActionHandler)&ManufactureInfoState::btnStopClick);
 	if (!_production)
 	{
@@ -186,6 +200,7 @@ void ManufactureInfoState::buildUi()
 		_base->addProduction(_production);
 	}
 	_btnSell->setPressed(_production->getSellItems());
+	_btnSell->setVisible(_production->getRules()->canAutoSell());
 	initProfitInfo();
 	setAssignedEngineer();
 
@@ -201,22 +216,21 @@ void ManufactureInfoState::buildUi()
 
 void ManufactureInfoState::initProfitInfo ()
 {
-	Mod *mod = _game->getMod();
 	const RuleManufacture *item = _production->getRules();
 
 	_producedItemsValue = 0;
-	for (std::map<std::string, int>::const_iterator i = item->getProducedItems().begin(); i != item->getProducedItems().end(); ++i)
+	auto ruleCraft = item->getProducedCraft();
+	if (ruleCraft)
 	{
-		int sellValue = 0;
-		if (item->getCategory() == "STR_CRAFT")
+		_producedItemsValue += ruleCraft->getSellCost();
+	}
+	else
+	{
+		for (auto& i : item->getProducedItems())
 		{
-			sellValue = mod->getCraft(i->first, true)->getSellCost();
+			int sellValue = i.first->getSellCost();
+			_producedItemsValue += sellValue * i.second;
 		}
-		else
-		{
-			sellValue = mod->getItem(i->first, true)->getSellCost();
-		}
-		_producedItemsValue += sellValue * i->second;
 	}
 }
 
@@ -272,6 +286,10 @@ void ManufactureInfoState::btnSellClick(Action *)
  */
 void ManufactureInfoState::btnStopClick(Action *)
 {
+	if (!_item && _production && _production->getRules()->getRefund())
+	{
+		_production->refundItem(_base, _game->getSavedGame(), _game->getMod());
+	}
 	_base->removeProduction(_production);
 	exitState();
 }
@@ -426,7 +444,7 @@ void ManufactureInfoState::lessEngineerClick(Action *action)
 void ManufactureInfoState::moreUnit(int change)
 {
 	if (change <= 0) return;
-	if (_production->getRules()->getCategory() == "STR_CRAFT" && _base->getAvailableHangars() - _base->getUsedHangars() <= 0)
+	if (_production->getRules()->getProducedCraft() && _base->getAvailableHangars() - _base->getUsedHangars() <= 0)
 	{
 		_timerMoreUnit->stop();
 		_game->pushState(new ErrorMessageState(tr("STR_NO_FREE_HANGARS_FOR_CRAFT_PRODUCTION"), _palette, _game->getMod()->getInterface("basescape")->getElement("errorMessage")->color, "BACK17.SCR", _game->getMod()->getInterface("basescape")->getElement("errorPalette")->color));
@@ -435,7 +453,7 @@ void ManufactureInfoState::moreUnit(int change)
 	{
 		int units = _production->getAmountTotal();
 		change = std::min(INT_MAX - units, change);
-		if (_production->getRules()->getCategory() == "STR_CRAFT")
+		if (_production->getRules()->getProducedCraft())
 			change = std::min(_base->getAvailableHangars() - _base->getUsedHangars(), change);
 		_production->setAmountTotal(units+change);
 		setAssignedEngineer();
@@ -474,7 +492,7 @@ void ManufactureInfoState::moreUnitClick(Action *action)
 	if (_production->getInfiniteAmount()) return; // We can't increase over infinite :)
 	if (action->getDetails()->button.button == SDL_BUTTON_RIGHT)
 	{
-		if (_production->getRules()->getCategory() == "STR_CRAFT")
+		if (_production->getRules()->getProducedCraft())
 		{
 			moreUnit(INT_MAX);
 		}
@@ -569,8 +587,14 @@ void ManufactureInfoState::onLessEngineer()
  */
 void ManufactureInfoState::handleWheelEngineer(Action *action)
 {
-	if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP) moreEngineer(Options::changeValueByMouseWheel);
-	else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN) lessEngineer(Options::changeValueByMouseWheel);
+	const SDL_Event &ev(*action->getDetails());
+	if (ev.type == SDL_MOUSEWHEEL)
+	{
+		if (ev.wheel.y > 0)
+			moreEngineer(Options::changeValueByMouseWheel);
+		else
+			lessEngineer(Options::changeValueByMouseWheel);
+	}
 }
 
 /**
@@ -597,8 +621,14 @@ void ManufactureInfoState::onLessUnit()
  */
 void ManufactureInfoState::handleWheelUnit(Action *action)
 {
-	if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP) moreUnit(Options::changeValueByMouseWheel);
-	else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN) lessUnit(Options::changeValueByMouseWheel);
+	const SDL_Event &ev(*action->getDetails());
+	if (ev.type == SDL_MOUSEWHEEL)
+	{
+		if (ev.wheel.y > 0)
+			moreUnit(Options::changeValueByMouseWheel);
+		else
+			lessUnit(Options::changeValueByMouseWheel);
+	}
 }
 
 /**

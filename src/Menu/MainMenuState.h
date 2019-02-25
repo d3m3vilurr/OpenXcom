@@ -30,7 +30,7 @@ class Text;
 class GoToMainMenuState : public State
 {
 public:
-	void init();
+	void init() override;
 };
 
 /**
@@ -59,7 +59,8 @@ public:
 	/// Handler for clicking the Quit button.
 	void btnQuitClick(Action *action);
 	/// Update the resolution settings, we just resized the window.
-	void resize(int &dX, int &dY);
+	void resize(int &dX, int &dY) override;
+	void init() override;
 };
 
 }

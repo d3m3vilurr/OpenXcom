@@ -17,6 +17,7 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "SaveConverter.h"
+#include <algorithm>
 #include <yaml-cpp/yaml.h>
 #include <SDL_endian.h>
 #include <fstream>
@@ -75,14 +76,8 @@ template <> std::string load(char* data) { return data; }
 
 char *SaveConverter::binaryBuffer(const std::string &filename, std::vector<char> &buffer) const
 {
-	std::string s = _savePath + CrossPlatform::PATH_SEPARATOR + filename;
-	std::ifstream datFile(s.c_str(), std::ios::in | std::ios::binary);
-	if (!datFile)
-	{
-		throw Exception(filename + " not found");
-	}
-	buffer = std::vector<char>((std::istreambuf_iterator<char>(datFile)), (std::istreambuf_iterator<char>()));
-	datFile.close();
+	auto datFile = CrossPlatform::readFile(_savePath + "/" + filename);
+	buffer = std::vector<char>((std::istreambuf_iterator<char>(*datFile)), (std::istreambuf_iterator<char>()));
 	return &buffer[0];
 }
 
@@ -118,41 +113,37 @@ void SaveConverter::getList(Language *lang, SaveOriginal info[NUM_SAVES])
 {
 	for (int i = 0; i < NUM_SAVES; ++i)
 	{
-		SaveOriginal save;
+		SaveOriginal &save = info[i];
 		save.id = 0;
 
-		int id = i + 1;
-		std::ostringstream ss;
-		ss << Options::getMasterUserFolder() << "GAME_" << id << CrossPlatform::PATH_SEPARATOR << "SAVEINFO.DAT";
-		std::ifstream datFile(ss.str().c_str(), std::ios::in | std::ios::binary);
-		if (datFile)
-		{
-			std::vector<char> buffer((std::istreambuf_iterator<char>(datFile)), (std::istreambuf_iterator<char>()));
-			char *data = &buffer[0];
-
-			std::string name = load<std::string>(data + 0x02);
-			int year = load<Uint16>(data + 0x1C);
-			int month = load<Uint16>(data + 0x1E);
-			int day = load<Uint16>(data + 0x20);
-			int hour = load<Uint16>(data + 0x22);
-			int minute = load<Uint16>(data + 0x24);
-			bool tactical = load<char>(data + 0x26) != 0;
-
-			GameTime time = GameTime(0, day, month + 1, year, hour, minute, 0);
-
-			std::ostringstream ssDate, ssTime;
-			ssDate << time.getDayString(lang) << "  " << lang->getString(time.getMonthString()) << "  " << time.getYear();
-			ssTime << time.getHour() << ":" << std::setfill('0') << std::setw(2) << time.getMinute();
-
-			save.id = id;
-			save.name = name;
-			save.date = ssDate.str();
-			save.time = ssTime.str();
-			save.tactical = tactical;
-
-			datFile.close();
+		const int id = i + 1;
+		std::string datname = Options::getMasterUserFolder() + "GAME_" + std::to_string(id) + "/SAVEINFO.DAT";
+		if (!CrossPlatform::fileExists(datname)) {
+			continue;
 		}
-		info[i] = save;
+		auto datFile = CrossPlatform::readFile(datname);
+		std::vector<char> buffer((std::istreambuf_iterator<char>(*datFile)), (std::istreambuf_iterator<char>()));
+		char *data = &buffer[0];
+
+		std::string name = load<std::string>(data + 0x02);
+		int year = load<Uint16>(data + 0x1C);
+		int month = load<Uint16>(data + 0x1E);
+		int day = load<Uint16>(data + 0x20);
+		int hour = load<Uint16>(data + 0x22);
+		int minute = load<Uint16>(data + 0x24);
+		bool tactical = load<char>(data + 0x26) != 0;
+
+		GameTime time = GameTime(0, day, month + 1, year, hour, minute, 0);
+
+		std::ostringstream ssDate, ssTime;
+		ssDate << time.getDayString(lang) << "  " << lang->getString(time.getMonthString()) << "  " << time.getYear();
+		ssTime << time.getHour() << ":" << std::setfill('0') << std::setw(2) << time.getMinute();
+
+		save.id = id;
+		save.name = name;
+		save.date = ssDate.str();
+		save.time = ssTime.str();
+		save.tactical = tactical;
 	}
 }
 
@@ -507,7 +498,7 @@ void SaveConverter::loadDatActs()
 	std::vector<char> buffer;
 	char *data = binaryBuffer("ACTS.DAT", buffer);
 
-	std::map< std::string, std::map<std::string, int> > chances;
+	std::map < std::string, std::map<std::string, int> > chances;
 	const size_t REGIONS = 12;
 	const size_t MISSIONS = 7;
 	for (size_t i = 0; i < REGIONS * MISSIONS; ++i)
@@ -519,7 +510,7 @@ void SaveConverter::loadDatActs()
 	}
 
 	YAML::Node node;
-	for (std::map< std::string, std::map<std::string, int> >::iterator i = chances.begin(); i != chances.end(); ++i)
+	for (std::map < std::string, std::map<std::string, int> >::iterator i = chances.begin(); i != chances.end(); ++i)
 	{
 		YAML::Node subnode;
 		subnode["region"] = i->first;
@@ -620,7 +611,7 @@ void SaveConverter::loadDatLoc()
 		case TARGET_UFO:
 		case TARGET_CRASH:
 		case TARGET_LANDED:
-			ufo = new Ufo(_mod->getUfo(_rules->getUfos()[0], true));
+			ufo = new Ufo(_mod->getUfo(_rules->getUfos()[0], true), 0);
 			ufo->setId(id);
 			ufo->setCrashId(id);
 			ufo->setLandId(id);
@@ -637,7 +628,7 @@ void SaveConverter::loadDatLoc()
 			target = xbase;
 			break;
 		case TARGET_ABASE:
-			abase = new AlienBase(_mod->getDeployment("STR_ALIEN_BASE_ASSAULT", true));
+			abase = new AlienBase(_mod->getDeployment("STR_ALIEN_BASE_ASSAULT", true), 0);
 			abase->setId(id);
 			abase->setAlienRace(_rules->getCrews()[dat]);
 			abase->setDiscovered(!visibility.test(0));
@@ -651,19 +642,19 @@ void SaveConverter::loadDatLoc()
 			target = waypoint;
 			break;
 		case TARGET_TERROR:
-			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_TERROR_MISSION", true));
+			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_TERROR_MISSION", true), nullptr);
 			break;
 		case TARGET_PORT:
-			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_PORT_TERROR", true));
+			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_PORT_TERROR", true), nullptr);
 			break;
 		case TARGET_ISLAND:
-			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_ISLAND_TERROR", true));
+			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_ISLAND_TERROR", true), nullptr);
 			break;
 		case TARGET_SHIP:
-			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_CARGO_SHIP_P1", true));
+			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_CARGO_SHIP_P1", true), nullptr);
 			break;
 		case TARGET_ARTEFACT:
-			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_ARTIFACT_SITE_P1", true));
+			mission = new MissionSite(_mod->getAlienMission("STR_ALIEN_TERROR", true), _mod->getDeployment("STR_ARTIFACT_SITE_P1", true), nullptr);
 			break;
 		}
 		if (mission != 0)
@@ -1055,7 +1046,7 @@ void SaveConverter::loadDatSoldier()
 			node["id"] = _save->getId("STR_SOLDIER");
 
 			Soldier *soldier = new Soldier(_mod->getSoldier(_mod->getSoldiersList().front(), true), 0);
-			soldier->load(node, _mod, _save);
+			soldier->load(node, _mod, _save, _mod->getScriptGlobal());
 			if (base != 0xFFFF)
 			{
 				Base *b = dynamic_cast<Base*>(_targets[base]);

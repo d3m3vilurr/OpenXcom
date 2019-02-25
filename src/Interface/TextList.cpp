@@ -39,7 +39,7 @@ namespace OpenXcom
  * @param x X position in pixels.
  * @param y Y position in pixels.
  */
-TextList::TextList(int width, int height, int x, int y) : InteractiveSurface(width, height, x, y), _big(0), _small(0), _font(0), _scroll(0), _visibleRows(0), _selRow(0), _color(0), _dot(false), _selectable(false), _condensed(false), _contrast(false), _wrap(false), _flooding(false),
+TextList::TextList(int width, int height, int x, int y) : InteractiveSurface(width, height, x, y), _big(0), _small(0), _font(0), _scroll(0), _visibleRows(0), _selRow(0), _color(0), _dot(false), _selectable(false), _condensed(false), _contrast(false), _wrap(false), _flooding(false), _ignoreSeparators(false),
 																								   _bg(0), _selector(0), _margin(0), _scrolling(true), _arrowPos(-1), _scrollPos(4), _arrowType(ARROW_VERTICAL),
 																								   _leftClick(0), _leftPress(0), _leftRelease(0), _rightClick(0), _rightPress(0), _rightRelease(0), _arrowsLeftEdge(0), _arrowsRightEdge(0), _comboBox(0)
 {
@@ -326,7 +326,7 @@ void TextList::addRow(int cols, ...)
 		// Wordwrap text if necessary
 		if (_wrap && txt->getTextWidth() > txt->getWidth())
 		{
-			txt->setWordWrap(true, true);
+			txt->setWordWrap(true, true, _ignoreSeparators);
 			rows = std::max(rows, txt->getNumLines());
 		}
 		rowHeight = std::max(rowHeight, txt->getTextHeight() + vmargin);
@@ -340,12 +340,12 @@ void TextList::addRow(int cols, ...)
 			{
 				if (_align[i] != ALIGN_RIGHT)
 				{
-				w += _font->getChar('.')->getCrop()->w + _font->getSpacing();
-				buf += '.';
-			}
+					w += _font->getChar('.').getCrop()->w + _font->getSpacing();
+					buf += '.';
+				}
 				if (_align[i] != ALIGN_LEFT)
 				{
-					w += _font->getChar('.')->getCrop()->w + _font->getSpacing();
+					w += _font->getChar('.').getCrop()->w + _font->getSpacing();
 					buf.insert(0, 1, '.');
 				}
 			}
@@ -414,6 +414,38 @@ void TextList::addRow(int cols, ...)
 }
 
 /**
+ * Removes the last row from the text list.
+ */
+void TextList::removeLastRow()
+{
+	if (!_texts.empty())
+	{
+		_texts.pop_back();
+	}
+	if (!_rows.empty())
+	{
+		size_t toRemove = _rows.back();
+		while (!_rows.empty() && _rows.back() == toRemove)
+		{
+			_rows.pop_back();
+		}
+	}
+	if (_arrowPos != -1)
+	{
+		if (!_arrowLeft.empty())
+		{
+			_arrowLeft.pop_back();
+		}
+		if (!_arrowRight.empty())
+		{
+			_arrowRight.pop_back();
+		}
+	}
+	_redraw = true;
+	updateArrows();
+}
+
+/**
  * Changes the columns that the list contains.
  * While rows can be unlimited, columns need to be specified
  * since they can have various widths for lining up the text.
@@ -425,6 +457,7 @@ void TextList::setColumns(int cols, ...)
 	va_list args;
 	va_start(args, cols);
 
+	_columns.clear();
 	for (int i = 0; i < cols; ++i)
 	{
 		_columns.push_back(va_arg(args, int));
@@ -440,7 +473,7 @@ void TextList::setColumns(int cols, ...)
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void TextList::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void TextList::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	for (std::vector< std::vector<Text*> >::iterator u = _texts.begin(); u < _texts.end(); ++u)
@@ -895,7 +928,7 @@ void TextList::updateArrows()
 	_down->setVisible(_rows.size() > _visibleRows /*&& _scroll < _rows.size() - _visibleRows*/);
 	_scrollbar->setVisible(_rows.size() > _visibleRows);
 	_scrollbar->invalidate();
-	_scrollbar->blit(this);
+	_scrollbar->blit(this->getSurface());
 }
 
 /**
@@ -949,7 +982,7 @@ void TextList::draw()
 			for (std::vector<Text*>::iterator j = _texts[i].begin(); j < _texts[i].end(); ++j)
 			{
 				(*j)->setY(y);
-				(*j)->blit(this);
+				(*j)->blit(this->getSurface());
 			}
 			if (!_texts[i].empty())
 			{
@@ -967,7 +1000,7 @@ void TextList::draw()
  * Blits the text list and selector.
  * @param surface Pointer to surface to blit onto.
  */
-void TextList::blit(Surface *surface)
+void TextList::blit(SDL_Surface *surface)
 {
 	if (_visible && !_hidden)
 	{
@@ -1074,15 +1107,10 @@ void TextList::think()
  */
 void TextList::mousePress(Action *action, State *state)
 {
-	bool allowScroll = true;
-	if (Options::changeValueByMouseWheel != 0)
+	if (_dragScrollable)
 	{
-		allowScroll = (action->getAbsoluteXMouse() < _arrowsLeftEdge || action->getAbsoluteXMouse() > _arrowsRightEdge);
-	}
-	if (allowScroll)
-	{
-		if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP) scrollUp(false, true);
-		else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN) scrollDown(false, true);
+		_accumulatedDelta = 0;
+		_overThreshold = false;
 	}
 	if (_selectable)
 	{
@@ -1097,6 +1125,34 @@ void TextList::mousePress(Action *action, State *state)
 	}
 }
 
+/**
+ * Handles mousewheel scrolling
+ */
+void TextList::mouseWheel(Action *action, State *state)
+{
+	bool allowScroll = true;
+	if (Options::changeValueByMouseWheel != 0)
+	{
+		allowScroll = (action->getAbsoluteXMouse() < _arrowsLeftEdge || action->getAbsoluteXMouse() > _arrowsRightEdge);
+	}
+	if (allowScroll && action->getDetails()->type == SDL_MOUSEWHEEL)
+	{
+		if (action->getDetails()->wheel.y > 0) scrollUp(false, true);
+		else scrollDown(false, true);
+	}
+	if (_selectable)
+	{
+		if (_selRow < _rows.size())
+		{
+			InteractiveSurface::mouseWheel(action, state);
+		}
+	}
+	else
+	{
+		InteractiveSurface::mouseWheel(action, state);
+	}
+}
+
 /*
  * Ignores any mouse clicks that aren't on a row.
  * @param action Pointer to an action.
@@ -1104,6 +1160,7 @@ void TextList::mousePress(Action *action, State *state)
  */
 void TextList::mouseRelease(Action *action, State *state)
 {
+	_accumulatedDelta = 0;
 	if (_selectable)
 	{
 		if (_selRow < _rows.size())
@@ -1124,6 +1181,13 @@ void TextList::mouseRelease(Action *action, State *state)
  */
 void TextList::mouseClick(Action *action, State *state)
 {
+	if (_overThreshold && _dragScrollable)
+	{
+		// End scrolling action.
+		_overThreshold = false;
+		_accumulatedDelta = 0;
+		return;
+	}
 	if (_selectable)
 	{
 		if (_selRow < _rows.size())
@@ -1149,6 +1213,29 @@ void TextList::mouseClick(Action *action, State *state)
  */
 void TextList::mouseOver(Action *action, State *state)
 {
+	if (_scrolling && _dragScrollable)
+	{
+		const int threshold = (_font->getHeight() + _font->getSpacing()) * action->getYScale();
+		const SDL_Event *ev = action->getDetails();
+		if (ev->type == SDL_MOUSEMOTION && ev->motion.state != 0)
+		{
+			// Only accumulate delta while mouse button is pressed
+			_accumulatedDelta += action->getDetails()->motion.yrel;
+		}
+		if (std::abs(_accumulatedDelta) >= threshold)
+		{
+			_overThreshold = action->getDetails()->motion.state != 0;
+		}
+		if (_overThreshold && action->getDetails()->motion.state)
+		{
+			if (std::abs(_accumulatedDelta) >= threshold)
+			{
+				if (_accumulatedDelta < 0) { scrollDown(false, false);      } // Finger moving up
+				else					   { scrollUp(false, false);        } // Finger moving down
+				_accumulatedDelta = 0;
+			}
+		}
+	}
 	if (_selectable)
 	{
 		int rowHeight = _font->getHeight() + _font->getSpacing(); //theorethical line height
@@ -1271,4 +1358,26 @@ void TextList::setFlooding(bool flooding)
 	_flooding = flooding;
 }
 
+void TextList::setIgnoreSeparators(bool ignoreSeparators)
+{
+	_ignoreSeparators = ignoreSeparators;
+}
+
+/**
+*  Sets drag-scrolling option, taking into account the option to actually drag-scroll.
+*  @param scrollable Desired drag-scrolling state.
+*/
+void TextList::setDragScrollable(bool scrollable)
+{
+	_dragScrollable = scrollable && Options::listDragScroll;
+}
+
+/**
+*  Checks if the TextList supports drag-scrolling.
+*  @return true if the list is drag-scrollable.
+*/
+bool TextList::isDragScrollable()
+{
+	return _dragScrollable;
+}
 }

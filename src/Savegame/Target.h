@@ -27,6 +27,7 @@ namespace OpenXcom
 class Language;
 class MovingTarget;
 class Craft;
+class Ufo;
 
 /**
  * Base class for targets on the globe
@@ -49,7 +50,7 @@ public:
 	/// Saves the target to YAML.
 	virtual YAML::Node save() const;
 	/// Saves the target's ID to YAML.
-	YAML::Node saveId() const;
+	virtual YAML::Node saveId() const;
 	/// Gets the target's type.
 	virtual std::string getType() const = 0;
 	/// Gets the target's longitude.
@@ -78,6 +79,8 @@ public:
 	std::vector<MovingTarget*> *getFollowers();
 	/// Gets the target's craft followers.
 	std::vector<Craft*> getCraftFollowers() const;
+	/// Gets the target's UFO followers.
+	std::vector<Ufo*> getUfoFollowers() const;
 	/// Gets the distance to another target.
 	double getDistance(const Target *target) const;
 };

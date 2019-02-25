@@ -18,13 +18,36 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <string>
+#include <map>
 #include <yaml-cpp/yaml.h>
+#include "RuleCraft.h"
 
 namespace OpenXcom
 {
 
 class RuleTerrain;
 class Mod;
+
+struct RuleUfoStats : RuleCraftStats
+{
+	std::string craftCustomDeploy, missionCustomDeploy;
+
+	/// Add different stats.
+	RuleUfoStats& operator+=(const RuleUfoStats& r)
+	{
+		*(RuleCraftStats*)this += r;
+		if (!r.craftCustomDeploy.empty()) craftCustomDeploy = r.craftCustomDeploy;
+		if (!r.missionCustomDeploy.empty()) missionCustomDeploy = r.missionCustomDeploy;
+		return *this;
+	}
+	/// Loads stats form YAML.
+	void load(const YAML::Node &node)
+	{
+		(*(RuleCraftStats*)this).load(node);
+		craftCustomDeploy = node["craftCustomDeploy"].as<std::string>(craftCustomDeploy);
+		missionCustomDeploy = node["missionCustomDeploy"].as<std::string>(missionCustomDeploy);
+	}
+};
 
 /**
  * Represents a specific type of UFO.
@@ -37,8 +60,14 @@ class RuleUfo
 private:
 	std::string _type, _size;
 	int _sprite, _marker, _markerLand, _markerCrash;
-	int _damageMax, _speedMax, _power, _range, _score, _reload, _breakOffTime, _sightRange, _missionScore;
+	int _power, _range, _score, _reload, _breakOffTime, _missionScore;
+	int _hunterKillerPercentage, _huntMode, _huntSpeed, _huntBehavior;
+	int _missilePower;
+	int _fireSound;
+	int _alertSound;
 	RuleTerrain *_battlescapeTerrainData;
+	RuleUfoStats _stats;
+	std::map<std::string, RuleUfoStats> _statsRaceBonus;
 	std::string _modSprite;
 public:
 	/// Creates a blank UFO ruleset.
@@ -48,9 +77,9 @@ public:
 	/// Loads UFO data from YAML.
 	void load(const YAML::Node& node, Mod *mod);
 	/// Gets the UFO's type.
-	std::string getType() const;
+	const std::string &getType() const;
 	/// Gets the UFO's size.
-	std::string getSize() const;
+	const std::string &getSize() const;
 	/// Gets the UFO's radius.
 	int getRadius() const;
 	/// Gets the UFO's sprite.
@@ -61,10 +90,6 @@ public:
 	int getLandMarker() const;
 	/// Gets the UFO's globe marker when crashed.
 	int getCrashMarker() const;
-	/// Gets the UFO's maximum damage.
-	int getMaxDamage() const;
-	/// Gets the UFO's maximum speed.
-	int getMaxSpeed() const;
 	/// Gets the UFO's weapon power.
 	int getWeaponPower() const;
 	/// Gets the UFO's weapon range.
@@ -77,12 +102,29 @@ public:
 	int getWeaponReload() const;
 	/// Gets the UFO's escape time.
 	int getBreakOffTime() const;
+	/// Gets the UFO's fire sound.
+	int getFireSound() const;
+	/// Gets the alert sound for this UFO.
+	int getAlertSound() const;
 	/// Gets the name of the surface that represents this UFO.
-	std::string getModSprite() const;
-	/// Gets the UFO's radar range.
-	int getSightRange() const;
+	const std::string &getModSprite() const;
+	/// Get basic statistic of UFO.
+	const RuleUfoStats& getStats() const;
+	/// Get race bonus of statistic of UFO.
+	const RuleUfoStats& getRaceBonus(const std::string& s) const;
+	const std::map<std::string, RuleUfoStats> &getRaceBonusRaw() const;
 	/// Gets the UFO's mission score.
 	int getMissionScore() const;
+	/// Gets the UFO's chance to become a hunter-killer.
+	int getHunterKillerPercentage() const;
+	/// Gets the UFO's hunting preferences.
+	int getHuntMode() const;
+	/// Gets the UFO's hunting speed (in percent of maximum speed).
+	int getHuntSpeed() const;
+	/// Gets the UFO's hunting behavior (normal, kamikaze or random).
+	int getHuntBehavior() const;
+	/// Gets the missile power (of a UFO that represents one or more missiles).
+	int getMissilePower() const { return _missilePower; }
 };
 
 }

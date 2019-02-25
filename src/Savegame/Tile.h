@@ -19,21 +19,34 @@
  */
 #include <list>
 #include <vector>
+#include "../Engine/Surface.h"
 #include "../Battlescape/Position.h"
 #include "../Mod/MapData.h"
 #include "BattleUnit.h"
+#include "BattleItem.h"
 
 #include <SDL_types.h> // for Uint8
 
 namespace OpenXcom
 {
 
-class Surface;
 class MapData;
 class BattleUnit;
 class BattleItem;
 class RuleInventory;
 class Particle;
+
+enum LightLayers : Uint8 { LL_AMBIENT, LL_FIRE, LL_ITEMS, LL_UNITS, LL_MAX };
+
+enum TileUnitOverlapping : int
+{
+	/// Any unit overlapping tile will be returned
+	TUO_NORMAL = 24,
+	/// Only units that overlap by 2 or more voxel will be returned
+	TUO_IGNORE_SMALL = 26,
+	/// Take unit from lower even if it not overlap
+	TUO_ALWAYS = 0,
+};
 
 /**
  * Basic element of which a battle map is build.
@@ -57,13 +70,13 @@ public:
 	static const int NOT_CALCULATED = -1;
 
 protected:
-	static const int LIGHTLAYERS = 3;
-	MapData *_objects[4];
-	int _mapDataID[4];
-	int _mapDataSetID[4];
-	int _currentFrame[4];
+	MapData *_objects[O_MAX];
+	int _mapDataID[O_MAX];
+	int _mapDataSetID[O_MAX];
+	int _currentFrame[O_MAX];
+	SurfaceRaw<const Uint8> _currentSurface[O_MAX] = { };
 	bool _discovered[3];
-	int _light[LIGHTLAYERS], _lastLight[LIGHTLAYERS];
+	int _light[LL_MAX];
 	int _smoke;
 	int _fire;
 	int _explosive;
@@ -113,7 +126,7 @@ public:
 	/// Get the TU cost to walk over a certain part of the tile.
 	int getTUCost(int part, MovementType movementType) const;
 	/// Checks if this tile has a floor.
-	bool hasNoFloor(Tile *tileBelow) const;
+	bool hasNoFloor(const SavedBattleGame *savedBattleGame = nullptr) const;
 	/// Checks if this tile is a big wall.
 	bool isBigWall() const;
 	/// Get terrain level.
@@ -152,9 +165,15 @@ public:
 	/// Gets the black fog of war status of this tile.
 	bool isDiscovered(int part) const;
 	/// Reset light to zero for this tile.
-	void resetLight(int layer);
+	void resetLight(LightLayers layer);
+	/// Reset light to zero for this tile and multiple layers.
+	void resetLightMulti(LightLayers layer);
 	/// Add light to this tile.
-	void addLight(int light, int layer);
+	void addLight(int light, LightLayers layer);
+	/// Get max light to this tile.
+	int getLight(LightLayers layer) const;
+	/// Get max light to this tile and multiple layers.
+	int getLightMulti(LightLayers layer) const;
 	/// Get the shade amount.
 	int getShade() const;
 	/// Destroy a tile part.
@@ -169,10 +188,22 @@ public:
 	int getExplosiveType() const;
 	/// Animated the tile parts.
 	void animate();
+	/// Update cached value of sprite.
+	void updateSprite(TilePart part);
 	/// Get object sprites.
-	Surface *getSprite(int part) const;
-	/// Set a unit on this tile.
-	void setUnit(BattleUnit *unit, Tile *tileBelow = 0);
+	SurfaceRaw<const Uint8> getSprite(TilePart part) const
+	{
+		return _currentSurface[part];
+	}
+
+	/**
+	 * Set a unit on this tile.
+	 */
+	void setUnit(BattleUnit *unit)
+	{
+		_unit = unit;
+	}
+
 	/**
 	 * Get the (alive) unit on this tile.
 	 * @return BattleUnit.
@@ -181,6 +212,9 @@ public:
 	{
 		return _unit;
 	}
+
+	/// Get unit from this tile or from tile below.
+	BattleUnit *getOverlappingUnit(const SavedBattleGame *saveBattleGame, TileUnitOverlapping range = TUO_NORMAL) const;
 	/// Set fire, does not increment overlaps.
 	void setFire(int fire);
 	/// Get fire.
@@ -208,7 +242,7 @@ public:
 	/// Remove item
 	void removeItem(BattleItem *item);
 	/// Get top-most item
-	int getTopItemSprite();
+	BattleItem* getTopItem();
 	/// New turn preparations.
 	void prepareNewTurn(bool smokeDamage);
 	/// Get inventory on this tile.

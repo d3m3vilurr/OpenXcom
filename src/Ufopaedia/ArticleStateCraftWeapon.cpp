@@ -30,6 +30,7 @@
 #include "../Interface/Text.h"
 #include "../Interface/TextButton.h"
 #include "../Interface/TextList.h"
+#include "../Mod/RuleInterface.h"
 
 namespace OpenXcom
 {
@@ -42,7 +43,20 @@ namespace OpenXcom
 		_txtTitle = new Text(200, 32, 5, 24);
 
 		// Set palette
-		setPalette("PAL_BATTLEPEDIA");
+		if (defs->customPalette)
+		{
+			setCustomPalette(_game->getMod()->getSurface(defs->image_id)->getPalette(), Mod::BATTLESCAPE_CURSOR);
+		}
+		else
+		{
+			setPalette("PAL_BATTLEPEDIA");
+		}
+
+		_buttonColor = _game->getMod()->getInterface("articleCraftWeapon")->getElement("button")->color;
+		_textColor = _game->getMod()->getInterface("articleCraftWeapon")->getElement("text")->color;
+		_textColor2 = _game->getMod()->getInterface("articleCraftWeapon")->getElement("text")->color2;
+		_listColor1 = _game->getMod()->getInterface("articleCraftWeapon")->getElement("list")->color;
+		_listColor2 = _game->getMod()->getInterface("articleCraftWeapon")->getElement("list")->color2;
 
 		ArticleState::initLayout();
 
@@ -50,12 +64,12 @@ namespace OpenXcom
 		add(_txtTitle);
 
 		// Set up objects
-		_game->getMod()->getSurface(defs->image_id)->blit(_bg);
-		_btnOk->setColor(Palette::blockOffset(1));
-		_btnPrev->setColor(Palette::blockOffset(1));
-		_btnNext->setColor(Palette::blockOffset(1));
+		_game->getMod()->getSurface(defs->image_id)->blitNShade(_bg, 0, 0);
+		_btnOk->setColor(_buttonColor);
+		_btnPrev->setColor(_buttonColor);
+		_btnNext->setColor(_buttonColor);
 
-		_txtTitle->setColor(Palette::blockOffset(14)+15);
+		_txtTitle->setColor(_textColor);
 		_txtTitle->setBig();
 		_txtTitle->setWordWrap(true);
 		_txtTitle->setText(tr(defs->title));
@@ -63,7 +77,8 @@ namespace OpenXcom
 		_txtInfo = new Text(310, 32, 5, 160);
 		add(_txtInfo);
 
-		_txtInfo->setColor(Palette::blockOffset(14)+15);
+		_txtInfo->setColor(_textColor);
+		_txtInfo->setSecondaryColor(_textColor2);
 		_txtInfo->setWordWrap(true);
 		_txtInfo->setText(tr(defs->text));
 
@@ -71,25 +86,25 @@ namespace OpenXcom
 		add(_lstInfo);
 
 
-		_lstInfo->setColor(Palette::blockOffset(14)+15);
+		_lstInfo->setColor(_listColor1);
 		_lstInfo->setColumns(2, 180, 70);
 		_lstInfo->setDot(true);
 		_lstInfo->setBig();
 
 		_lstInfo->addRow(2, tr("STR_DAMAGE").c_str(), Unicode::formatNumber(weapon->getDamage()).c_str());
-		_lstInfo->setCellColor(0, 1, Palette::blockOffset(15)+4);
+		_lstInfo->setCellColor(0, 1, _listColor2);
 
 		_lstInfo->addRow(2, tr("STR_RANGE").c_str(), tr("STR_KILOMETERS").arg(weapon->getRange()).c_str());
-		_lstInfo->setCellColor(1, 1, Palette::blockOffset(15)+4);
+		_lstInfo->setCellColor(1, 1, _listColor2);
 
 		_lstInfo->addRow(2, tr("STR_ACCURACY").c_str(), Unicode::formatPercentage(weapon->getAccuracy()).c_str());
-		_lstInfo->setCellColor(2, 1, Palette::blockOffset(15)+4);
+		_lstInfo->setCellColor(2, 1, _listColor2);
 
 		_lstInfo->addRow(2, tr("STR_RE_LOAD_TIME").c_str(), tr("STR_SECONDS").arg(weapon->getStandardReload()).c_str());
-		_lstInfo->setCellColor(3, 1, Palette::blockOffset(15)+4);
+		_lstInfo->setCellColor(3, 1, _listColor2);
 
 		_lstInfo->addRow(2, tr("STR_ROUNDS").c_str(), Unicode::formatNumber(weapon->getAmmoMax()).c_str());
-		_lstInfo->setCellColor(4, 1, Palette::blockOffset(15)+4);
+		_lstInfo->setCellColor(4, 1, _listColor2);
 
 		centerAllSurfaces();
 	}

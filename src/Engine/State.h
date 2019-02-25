@@ -28,6 +28,7 @@ namespace OpenXcom
 class Game;
 class Surface;
 class InteractiveSurface;
+class Window;
 class Action;
 class LocalizedText;
 class SavedBattleGame;
@@ -49,6 +50,7 @@ protected:
 	static Game *_game;
 	std::vector<Surface*> _surfaces;
 	bool _screen;
+	bool _soundPlayed;
 	InteractiveSurface *_modal;
 	RuleInterface *_ruleInterface;
 	RuleInterface *_ruleInterfaceParent;
@@ -62,6 +64,8 @@ public:
 	virtual ~State();
 	/// Set interface rules.
 	void setInterface(const std::string &s, bool alterPal = false, SavedBattleGame *battleGame = 0);
+	/// Set window background.
+	void setWindowBackground(Window *window, const std::string &s);
 	/// Adds a child element to the state.
 	void add(Surface *surface);
 	/// Adds a child element to the state.
@@ -87,6 +91,8 @@ public:
 	/// Get the localized text.
 	const LocalizedText &tr(const std::string &id) const;
 	/// Get the localized text.
+	const LocalizedText &trAlt(const std::string &id, int alt) const;
+	/// Get the localized text.
 	LocalizedText tr(const std::string &id, unsigned n) const;
 	/// Get the localized text.
 	const LocalizedText &tr(const std::string &id, SoldierGender gender) const;
@@ -103,15 +109,19 @@ public:
 	/// Sets a modal surface.
 	void setModal(InteractiveSurface *surface);
 	/// Changes a set of colors on the state's 8bpp palette.
-	void setPalette(SDL_Color *colors, int firstcolor = 0, int ncolors = 256, bool immediately = true);
+	void setPalette(const SDL_Color *colors, int firstcolor = 0, int ncolors = 256, bool immediately = true);
 	/// Changes the state's 8bpp palette with certain resources.
 	void setPalette(const std::string &palette, int backpals = -1);
+	/// Changes the state's 8bpp palette with certain resources.
+	void setCustomPalette(SDL_Color *colors, int cursorColor);
 	/// Gets the state's 8bpp palette.
 	SDL_Color *getPalette();
 	/// Let the state know the window has been resized.
 	virtual void resize(int &dX, int &dY);
 	/// Re-orients all the surfaces in the state.
 	virtual void recenter(int dX, int dY);
+	/// Returns the pointer to the game object
+	static Game *getGame();
 };
 
 }

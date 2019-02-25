@@ -165,7 +165,7 @@ BaseInfoState::BaseInfoState(Base *base, BasescapeState *state) : _base(base), _
 		ss << "ALT";
 	}
 	ss << "BACK07.SCR";
-	_game->getMod()->getSurface(ss.str())->blit(_bg);
+	_game->getMod()->getSurface(ss.str())->blitNShade(_bg, 0, 0);
 
 	_mini->setTexture(_game->getMod()->getSurfaceSet("BASEBITS.PCK"));
 	_mini->setBases(_game->getSavedGame()->getBases());
@@ -323,11 +323,11 @@ void BaseInfoState::init()
 	if (Options::storageLimitsEnforced)
 	{
 		std::ostringstream ss72;
-		ss72 << _base->getUsedContainment() << ":" << _base->getAvailableContainment();
+		ss72 << _base->getUsedContainment(0) << ":" << _base->getAvailableContainment(0);
 		_numContainment->setText(ss72.str());
 
-		_barContainment->setMax(_base->getAvailableContainment());
-		_barContainment->setValue(_base->getUsedContainment());
+		_barContainment->setMax(_base->getAvailableContainment(0));
+		_barContainment->setValue(_base->getUsedContainment(0));
 	}
 
 	std::ostringstream ss8;
@@ -395,7 +395,8 @@ void BaseInfoState::handleKeyPress(Action *action)
 {
 	if (action->getDetails()->type == SDL_KEYDOWN)
 	{
-		SDLKey baseKeys[] = {Options::keyBaseSelect1,
+		// SDL2 uses SDL_Keycode struct
+		SDL_Keycode baseKeys[] = {Options::keyBaseSelect1,
 			                 Options::keyBaseSelect2,
 			                 Options::keyBaseSelect3,
 			                 Options::keyBaseSelect4,

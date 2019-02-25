@@ -18,6 +18,7 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "../Engine/InteractiveSurface.h"
+#include <locale>
 #include <map>
 #include <string>
 
@@ -41,6 +42,7 @@ class Inventory : public InteractiveSurface
 private:
 	Game *_game;
 	Surface *_grid, *_items, *_selection;
+	Uint8 _twoHandedRed, _twoHandedGreen;
 	WarningMessage *_warning;
 	BattleUnit *_selUnit;
 	BattleItem *_selItem;
@@ -48,10 +50,29 @@ private:
 	BattleItem *_mouseOverItem;
 	int _groundOffset, _animFrame;
 	std::map<int, std::map<int, int> > _stackLevel;
-	std::vector<std::pair<int, int> > _grenadeIndicators;
+	Surface *_stunIndicator, *_woundIndicator, *_burnIndicator, *_shockIndicator;
 	NumberText *_stackNumber;
+	std::string _searchString;
 	Timer *_animTimer;
+#ifdef __MOBILE__
+	Timer *_longPressTimer;
+	// SDL_Event for long press action
+	SDL_Event _longPressEvent;
+	// A fake Action pointer for long press events.
+	Action *_longPressAction;
+	State *_longPressState;
+#endif
+	// Cursor placement for drag-and-drop
+	int _xBeforeDrag, _yBeforeDrag;
+	bool _dragging, _clicked;
+
 	int _depth;
+	RuleInventory *_inventorySlotRightHand = nullptr;
+	RuleInventory *_inventorySlotLeftHand = nullptr;
+	RuleInventory *_inventorySlotBackPack = nullptr;
+	RuleInventory *_inventorySlotBelt = nullptr;
+	RuleInventory *_inventorySlotGround = nullptr;
+
 	/// Moves an item to a specified slot.
 	void moveItem(BattleItem *item, RuleInventory *slot, int x, int y);
 	/// Gets the slot in the specified position.
@@ -62,37 +83,47 @@ public:
 	/// Cleans up the inventory.
 	~Inventory();
 	/// Sets the inventory's palette.
-	void setPalette(SDL_Color *colors, int firstcolor = 0, int ncolors = 256);
+	void setPalette(const SDL_Color *colors, int firstcolor = 0, int ncolors = 256) override;
 	/// Sets the inventory's Time Unit mode.
 	void setTuMode(bool tu);
+	/// Gets the inventory's selected unit.
+	BattleUnit *getSelectedUnit() const;
 	/// Sets the inventory's selected unit.
 	void setSelectedUnit(BattleUnit *unit);
 	/// Draws the inventory.
-	void draw();
+	void draw() override;
 	/// Draws the inventory grid.
 	void drawGrid();
+	/// Draws the inventory grid labels.
+	void drawGridLabels(bool showTuCost = false);
 	/// Draws the inventory items.
 	void drawItems();
+	/// Draws the selected item.
+	void drawSelectedItem();
 	/// Gets the currently selected item.
 	BattleItem *getSelectedItem() const;
 	/// Sets the currently selected item.
 	void setSelectedItem(BattleItem *item);
+	/// Sets the search string.
+	void setSearchString(const std::string &searchString);
 	/// Gets the mouse over item.
 	BattleItem *getMouseOverItem() const;
 	/// Sets the mouse over item.
 	void setMouseOverItem(BattleItem *item);
 	/// Handles timers.
-	void think();
+	void think() override;
 	/// Blits the inventory onto another surface.
-	void blit(Surface *surface);
+	void blit(SDL_Surface *surface) override;
 	/// Special handling for mouse hovers.
-	void mouseOver(Action *action, State *state);
+	void mouseOver(Action *action, State *state) override;
 	/// Special handling for mouse clicks.
-	void mouseClick(Action *action, State *state);
+	void mouseClick(Action *action, State *state) override;
 	/// Unloads the selected weapon.
 	bool unload();
+	/// Checks whether the given item is visible with the current search string.
+	bool isInSearchString(BattleItem *item);
 	/// Arranges items on the ground.
-	void arrangeGround(bool alterOffset = true);
+	void arrangeGround(int alterOffset = 0);
 	/// Attempts to place an item in an inventory slot.
 	bool fitItem(RuleInventory *newSlot, BattleItem *item, std::string &warning);
 	/// Checks if two items can be stacked on one another.
@@ -101,8 +132,18 @@ public:
 	static bool overlapItems(BattleUnit *unit, BattleItem *item, RuleInventory *slot, int x = 0, int y = 0);
 	/// Shows a warning message.
 	void showWarning(const std::string &msg);
-	/// Show priming warnings on grenades.
-	void drawPrimers();
+	/// Animate surface.
+	void animate();
+	/// Get current animation frame for invenotry.
+	int getAnimFrame() const { return _animFrame; }
+#ifdef __MOBILE__
+	/// Start long press timer
+	void mousePress(Action *action, State *state) override;
+	/// Stop long press timer
+	void mouseRelease(Action *action, State *state) override;
+	/// Handle long press on grenade
+	void longPressAction();
+#endif
 };
 
 }

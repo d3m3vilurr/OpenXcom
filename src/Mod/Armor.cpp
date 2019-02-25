@@ -17,9 +17,38 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "Armor.h"
+#include "../Engine/ScriptBind.h"
+#include "Mod.h"
 
 namespace OpenXcom
 {
+
+namespace
+{
+
+const Sint8 defTriBool = -1;
+
+void loadTriBoolHelper(Sint8& value, const YAML::Node& node)
+{
+	if (node)
+	{
+		if (node.IsNull())
+		{
+			value = defTriBool;
+		}
+		else
+		{
+			value = node.as<bool>();
+		}
+	}
+}
+
+bool useTriBoolHelper(Sint8 value, bool def)
+{
+	return value == defTriBool ? def : value;
+}
+
+}
 
 const std::string Armor::NONE = "STR_NONE";
 
@@ -29,14 +58,28 @@ const std::string Armor::NONE = "STR_NONE";
  * @param type String defining the type.
  */
 Armor::Armor(const std::string &type) :
-	_type(type), _frontArmor(0), _sideArmor(0), _rearArmor(0), _underArmor(0),
-	_drawingRoutine(0), _drawBubbles(false), _movementType(MT_WALK), _size(1), _weight(0),
-	_deathFrames(3), _constantAnimation(false), _canHoldWeapon(false), _hasInventory(true),
-	_forcedTorso(TORSO_USE_GENDER),
-	_faceColorGroup(0), _hairColorGroup(0), _utileColorGroup(0), _rankColorGroup(0)
+	_type(type), _frontArmor(0), _sideArmor(0), _leftArmorDiff(0), _rearArmor(0), _underArmor(0),
+	_drawingRoutine(0), _drawBubbles(false), _movementType(MT_WALK), _moveSound(-1), _size(1), _weight(0),
+	_visibilityAtDark(0), _visibilityAtDay(0), _personalLight(15),
+	_camouflageAtDay(0), _camouflageAtDark(0), _antiCamouflageAtDay(0), _antiCamouflageAtDark(0), _heatVision(0), _psiVision(0),
+	_deathFrames(3), _constantAnimation(false), _canHoldWeapon(false), _hasInventory(true), _forcedTorso(TORSO_USE_GENDER),
+	_faceColorGroup(0), _hairColorGroup(0), _utileColorGroup(0), _rankColorGroup(0),
+	_fearImmune(defTriBool), _bleedImmune(defTriBool), _painImmune(defTriBool), _zombiImmune(defTriBool),
+	_ignoresMeleeThreat(defTriBool), _createsMeleeThreat(defTriBool),
+	_overKill(0.5f), _meleeDodgeBackPenalty(0),
+	_allowsRunning(defTriBool), _allowsStrafing(defTriBool), _allowsKneeling(defTriBool), _allowsMoving(1),
+	_instantWoundRecovery(false),
+	_standHeight(-1), _kneelHeight(-1), _floatHeight(-1)
 {
 	for (int i=0; i < DAMAGE_TYPES; i++)
 		_damageModifier[i] = 1.0f;
+
+	_psiDefence.setPsiDefense();
+	_timeRecovery.setTimeRecovery();
+	_energyRecovery.setEnergyRecovery();
+	_stunRecovery.setStunRecovery();
+
+	_customArmorPreviewIndex.push_back(0);
 }
 
 /**
@@ -51,8 +94,12 @@ Armor::~Armor()
  * Loads the armor from a YAML file.
  * @param node YAML node.
  */
-void Armor::load(const YAML::Node &node)
+void Armor::load(const YAML::Node &node, const ModScript &parsers, Mod *mod)
 {
+	if (const YAML::Node &parent = node["refNode"])
+	{
+		load(parent, parsers, mod);
+	}
 	_type = node["type"].as<std::string>(_type);
 	_spriteSheet = node["spriteSheet"].as<std::string>(_spriteSheet);
 	_spriteInv = node["spriteInv"].as<std::string>(_spriteInv);
@@ -68,18 +115,37 @@ void Armor::load(const YAML::Node &node)
 		_corpseBattle = node["corpseBattle"].as< std::vector<std::string> >();
 		_corpseGeo = _corpseBattle[0];
 	}
+	_builtInWeapons = node["builtInWeapons"].as<std::vector<std::string> >(_builtInWeapons);
 	_corpseGeo = node["corpseGeo"].as<std::string>(_corpseGeo);
 	_storeItem = node["storeItem"].as<std::string>(_storeItem);
 	_specWeapon = node["specialWeapon"].as<std::string>(_specWeapon);
+
+	_layersDefaultPrefix = node["layersDefaultPrefix"].as<std::string>(_layersDefaultPrefix);
+	_layersSpecificPrefix = node["layersSpecificPrefix"].as< std::map<int, std::string> >(_layersSpecificPrefix);
+	_layersDefinition = node["layersDefinition"].as< std::map<std::string, std::vector<std::string> > >(_layersDefinition);
+
 	_frontArmor = node["frontArmor"].as<int>(_frontArmor);
 	_sideArmor = node["sideArmor"].as<int>(_sideArmor);
+	_leftArmorDiff = node["leftArmorDiff"].as<int>(_leftArmorDiff);
 	_rearArmor = node["rearArmor"].as<int>(_rearArmor);
 	_underArmor = node["underArmor"].as<int>(_underArmor);
 	_drawingRoutine = node["drawingRoutine"].as<int>(_drawingRoutine);
 	_drawBubbles = node["drawBubbles"].as<bool>(_drawBubbles);
 	_movementType = (MovementType)node["movementType"].as<int>(_movementType);
-	_size = node["size"].as<int>(_size);
+	if (node["moveSound"])
+	{
+		_moveSound = mod->getSoundOffset(node["moveSound"].as<int>(_moveSound), "BATTLE.CAT");
+	}
 	_weight = node["weight"].as<int>(_weight);
+	_visibilityAtDark = node["visibilityAtDark"].as<int>(_visibilityAtDark);
+	_visibilityAtDay = node["visibilityAtDay"].as<int>(_visibilityAtDay);
+	_personalLight = node["personalLight"].as<int>(_personalLight);
+	_camouflageAtDay = node["camouflageAtDay"].as<int>(_camouflageAtDay);
+	_camouflageAtDark = node["camouflageAtDark"].as<int>(_camouflageAtDark);
+	_antiCamouflageAtDay = node["antiCamouflageAtDay"].as<int>(_antiCamouflageAtDay);
+	_antiCamouflageAtDark = node["antiCamouflageAtDark"].as<int>(_antiCamouflageAtDark);
+	_heatVision = node["heatVision"].as<int>(_heatVision);
+	_psiVision = node["psiVision"].as<int>(_psiVision);
 	_stats.merge(node["stats"].as<UnitStats>(_stats));
 	if (const YAML::Node &dmg = node["damageModifier"])
 	{
@@ -106,6 +172,43 @@ void Armor::load(const YAML::Node &node)
 		_drawingRoutine == 17 ||
 		_drawingRoutine == 18);
 
+	if (const YAML::Node &size = node["size"])
+	{
+		_size = size.as<int>(_size);
+		if (_size != 1)
+		{
+			_fearImmune = 1;
+			_bleedImmune = 1;
+			_painImmune = 1;
+			_zombiImmune = 1;
+			_ignoresMeleeThreat = 1;
+			_createsMeleeThreat = 0;
+		}
+	}
+	loadTriBoolHelper(_fearImmune, node["fearImmune"]);
+	loadTriBoolHelper(_bleedImmune, node["bleedImmune"]);
+	loadTriBoolHelper(_painImmune, node["painImmune"]);
+	if (_size == 1) //Big units are always immune, because game we don't have 2x2 unit zombie
+	{
+		loadTriBoolHelper(_zombiImmune, node["zombiImmune"]);
+	}
+	loadTriBoolHelper(_ignoresMeleeThreat, node["ignoresMeleeThreat"]);
+	loadTriBoolHelper(_createsMeleeThreat, node["createsMeleeThreat"]);
+
+	_overKill = node["overKill"].as<float>(_overKill);
+	_meleeDodgeBackPenalty = node["meleeDodgeBackPenalty"].as<float>(_meleeDodgeBackPenalty);
+
+	_psiDefence.load(node["psiDefence"]);
+	_meleeDodge.load(node["meleeDodge"]);
+
+	if (const YAML::Node &rec = node["recovery"])
+	{
+		_timeRecovery.load(rec["time"]);
+		_energyRecovery.load(rec["energy"]);
+		_moraleRecovery.load(rec["morale"]);
+		_healthRecovery.load(rec["health"]);
+		_stunRecovery.load(rec["stun"]);
+	}
 	_faceColorGroup = node["spriteFaceGroup"].as<int>(_faceColorGroup);
 	_hairColorGroup = node["spriteHairGroup"].as<int>(_hairColorGroup);
 	_rankColorGroup = node["spriteRankGroup"].as<int>(_rankColorGroup);
@@ -114,7 +217,34 @@ void Armor::load(const YAML::Node &node)
 	_hairColor = node["spriteHairColor"].as<std::vector<int> >(_hairColor);
 	_rankColor = node["spriteRankColor"].as<std::vector<int> >(_rankColor);
 	_utileColor = node["spriteUtileColor"].as<std::vector<int> >(_utileColor);
+
+	_battleUnitScripts.load(_type, node, parsers.battleUnitScripts);
+
 	_units = node["units"].as< std::vector<std::string> >(_units);
+	_scriptValues.load(node, parsers.getShared());
+	if (const YAML::Node &capi = node["customArmorPreviewIndex"])
+	{
+		_customArmorPreviewIndex.clear();
+		if (capi.IsScalar())
+		{
+			_customArmorPreviewIndex.push_back(mod->getSpriteOffset(capi.as<int>(), "CustomArmorPreviews"));
+		}
+		else
+		{
+			for (YAML::const_iterator i = capi.begin(); i != capi.end(); ++i)
+			{
+				_customArmorPreviewIndex.push_back(mod->getSpriteOffset(i->as<int>(), "CustomArmorPreviews"));
+			}
+		}
+	}
+	loadTriBoolHelper(_allowsRunning, node["allowsRunning"]);
+	loadTriBoolHelper(_allowsStrafing, node["allowsStrafing"]);
+	loadTriBoolHelper(_allowsKneeling, node["allowsKneeling"]);
+	_allowsMoving = node["allowsMoving"].as<bool>(_allowsMoving);
+	_instantWoundRecovery = node["instantWoundRecovery"].as<bool>(_instantWoundRecovery);
+	_standHeight = node["standHeight"].as<int>(_standHeight);
+	_kneelHeight = node["kneelHeight"].as<int>(_kneelHeight);
+	_floatHeight = node["floatHeight"].as<int>(_floatHeight);
 }
 
 /**
@@ -155,10 +285,19 @@ int Armor::getFrontArmor() const
 }
 
 /**
- * Gets the side armor level.
- * @return The side armor level.
+ * Gets the left side armor level.
+ * @return The left side armor level.
  */
-int Armor::getSideArmor() const
+int Armor::getLeftSideArmor() const
+{
+	return _sideArmor + _leftArmorDiff;
+}
+
+/**
+* Gets the right side armor level.
+* @return The right side armor level.
+*/
+int Armor::getRightSideArmor() const
 {
 	return _sideArmor;
 }
@@ -179,6 +318,24 @@ int Armor::getRearArmor() const
 int Armor::getUnderArmor() const
 {
 	return _underArmor;
+}
+
+/**
+ * Gets the armor level of part.
+ * @param side Part of armor.
+ * @return The armor level of part.
+ */
+int Armor::getArmor(UnitSide side) const
+{
+	switch (side)
+	{
+	case SIDE_FRONT:	return _frontArmor;
+	case SIDE_LEFT:		return _sideArmor + _leftArmorDiff;
+	case SIDE_RIGHT:	return _sideArmor;
+	case SIDE_REAR:		return _rearArmor;
+	case SIDE_UNDER:	return _underArmor;
+	default: return 0;
+	}
 }
 
 
@@ -252,6 +409,15 @@ MovementType Armor::getMovementType() const
 }
 
 /**
+* Gets the armor's move sound.
+* @return The id of the armor's move sound.
+*/
+int Armor::getMoveSound() const
+{
+	return _moveSound;
+}
+
+/**
  * Gets the size of the unit. Normally this is 1 (small) or 2 (big).
  * @return The unit's size.
  */
@@ -261,6 +427,14 @@ int Armor::getSize() const
 }
 
 /**
+ * Gets the total size of the unit. Normally this is 1 for small or 4 for big.
+ * @return The unit's size.
+ */
+int Armor::getTotalSize() const
+{
+	return _size * _size;
+}
+/**
  * Gets the damage modifier for a certain damage type.
  * @param dt The damageType.
  * @return The damage modifier 0->1.
@@ -268,6 +442,16 @@ int Armor::getSize() const
 float Armor::getDamageModifier(ItemDamageType dt) const
 {
 	return _damageModifier[(int)dt];
+}
+
+const std::vector<float> Armor::getDamageModifiersRaw() const
+{
+	std::vector<float> result;
+	for (int i = 0; i < DAMAGE_TYPES; i++)
+	{
+		result.push_back(_damageModifier[i]);
+	}
+	return result;
 }
 
 /** Gets the loftempSet.
@@ -288,6 +472,70 @@ const UnitStats *Armor::getStats() const
 }
 
 /**
+ * Gets unit psi defense.
+ */
+int Armor::getPsiDefence(const BattleUnit* unit) const
+{
+	return _psiDefence.getBonus(unit);
+}
+
+/**
+ * Gets unit melee dodge chance.
+ */
+int Armor::getMeleeDodge(const BattleUnit* unit) const
+{
+	return _meleeDodge.getBonus(unit);
+}
+
+/**
+ * Gets unit dodge penalty if hit from behind.
+ */
+float Armor::getMeleeDodgeBackPenalty() const
+{
+	return _meleeDodgeBackPenalty;
+}
+
+/**
+ *  Gets unit TU recovery.
+ */
+int Armor::getTimeRecovery(const BattleUnit* unit) const
+{
+	return _timeRecovery.getBonus(unit);
+}
+
+/**
+ *  Gets unit Energy recovery.
+ */
+int Armor::getEnergyRecovery(const BattleUnit* unit) const
+{
+	return _energyRecovery.getBonus(unit);
+}
+
+/**
+ *  Gets unit Morale recovery.
+ */
+int Armor::getMoraleRecovery(const BattleUnit* unit) const
+{
+	return _moraleRecovery.getBonus(unit);
+}
+
+/**
+ *  Gets unit Health recovery.
+ */
+int Armor::getHealthRecovery(const BattleUnit* unit) const
+{
+	return _healthRecovery.getBonus(unit);
+}
+
+/**
+ *  Gets unit Stun recovery.
+ */
+int Armor::getStunRegeneration(const BattleUnit* unit) const
+{
+	return _stunRecovery.getBonus(unit);
+}
+
+/**
  * Gets the armor's weight.
  * @return the weight of the armor.
  */
@@ -305,7 +553,7 @@ int Armor::getDeathFrames() const
 	return _deathFrames;
 }
 
-/*
+/**
  * Gets if armor uses constant animation.
  * @return if it uses constant animation
  */
@@ -314,7 +562,7 @@ bool Armor::getConstantAnimation() const
 	return _constantAnimation;
 }
 
-/*
+/**
  * Gets if armor can hold weapon.
  * @return if it can hold weapon
  */
@@ -323,13 +571,176 @@ bool Armor::getCanHoldWeapon() const
 	return _canHoldWeapon;
 }
 
-/**
+/*
  * Checks if this armor ignores gender (power suit/flying suit).
  * @return which torso to force on the sprite.
  */
 ForcedTorso Armor::getForcedTorso() const
 {
 	return _forcedTorso;
+}
+
+/**
+ * What weapons does this armor have built in?
+ * this is a vector of strings representing any
+ * weapons that may be inherent to this armor.
+ * note: unlike "livingWeapon" this is used in ADDITION to
+ * any loadout or living weapon item that may be defined.
+ * @return list of weapons that are integral to this armor.
+ */
+const std::vector<std::string> &Armor::getBuiltInWeapons() const
+{
+	return _builtInWeapons;
+}
+
+/**
+ * Gets max view distance at dark in BattleScape.
+ * @return The distance to see at dark.
+ */
+int Armor::getVisibilityAtDark() const
+{
+	return _visibilityAtDark;
+}
+
+/**
+* Gets max view distance at day in BattleScape.
+* @return The distance to see at day.
+*/
+int Armor::getVisibilityAtDay() const
+{
+	return _visibilityAtDay;
+}
+
+/**
+* Gets info about camouflage at day.
+* @return The vision distance modifier.
+*/
+int Armor::getCamouflageAtDay() const
+{
+	return _camouflageAtDay;
+}
+
+/**
+* Gets info about camouflage at dark.
+* @return The vision distance modifier.
+*/
+int Armor::getCamouflageAtDark() const
+{
+	return _camouflageAtDark;
+}
+
+/**
+* Gets info about anti camouflage at day.
+* @return The vision distance modifier.
+*/
+int Armor::getAntiCamouflageAtDay() const
+{
+	return _antiCamouflageAtDay;
+}
+
+/**
+* Gets info about anti camouflage at dark.
+* @return The vision distance modifier.
+*/
+int Armor::getAntiCamouflageAtDark() const
+{
+	return _antiCamouflageAtDark;
+}
+
+/**
+* Gets info about heat vision.
+* @return How much smoke is ignored, in percent.
+*/
+int Armor::getHeatVision() const
+{
+	return _heatVision;
+}
+
+/**
+* Gets info about psi vision.
+* @return How many tiles can units be sensed even through solid obstacles (e.g. walls).
+*/
+int Armor::getPsiVision() const
+{
+	return _psiVision;
+}
+
+/**
+* Gets personal light radius created by solders.
+* @return Return light radius.
+*/
+int Armor::getPersonalLight() const
+{
+	return _personalLight;
+}
+
+/**
+ * Gets how armor react to fear.
+ * @param def Default value.
+ * @return Can ignored fear?
+ */
+bool Armor::getFearImmune(bool def) const
+{
+	return useTriBoolHelper(_fearImmune, def);
+}
+
+/**
+ * Gets how armor react to bleeding.
+ * @param def Default value.
+ * @return Can ignore bleed?
+ */
+bool Armor::getBleedImmune(bool def) const
+{
+	return useTriBoolHelper(_bleedImmune, def);
+}
+
+/**
+ * Gets how armor react to inflicted pain.
+ * @param def
+ * @return Can ignore pain?
+ */
+bool Armor::getPainImmune(bool def) const
+{
+	return useTriBoolHelper(_painImmune, def);
+}
+
+/**
+ * Gets how armor react to zombification.
+ * @param def Default value.
+ * @return Can't be turn to zombie?
+ */
+bool Armor::getZombiImmune(bool def) const
+{
+	return useTriBoolHelper(_zombiImmune, def);
+}
+
+/**
+ * Gets whether or not this unit ignores close quarters threats.
+ * @param def Default value.
+ * @return Ignores CQB check?
+ */
+bool Armor::getIgnoresMeleeThreat(bool def) const
+{
+	return useTriBoolHelper(_ignoresMeleeThreat, def);
+}
+
+/**
+ * Gets whether or not this unit is a close quarters threat.
+ * @param def Default value.
+ * @return Creates CQB check for others?
+ */
+bool Armor::getCreatesMeleeThreat(bool def) const
+{
+	return useTriBoolHelper(_createsMeleeThreat, def);
+}
+
+/**
+ * Gets how much negative hp is require to gib unit.
+ * @return Percent of require hp.
+ */
+float Armor::getOverKill() const
+{
+	return _overKill;
 }
 
 /**
@@ -368,20 +779,40 @@ int Armor::getRankColorGroup() const
 	return _rankColorGroup;
 }
 
+namespace
+{
+
+/**
+ * Helper function finding value in vector with fallback if vector is shorter.
+ * @param vec Vector with values we try get.
+ * @param pos Position in vector that can be greater than size of vector.
+ * @return Value in vector.
+ */
+int findWithFallback(const std::vector<int> &vec, size_t pos)
+{
+	//if pos == 31 then we test for 31, 15, 7
+	//if pos == 36 then we test for 36, 4
+	//we stop on p < 8 for comatibility reasons.
+	for (int i = 0; i <= 4; ++i)
+	{
+		size_t p = (pos & (127 >> i));
+		if (p < vec.size())
+		{
+			return vec[p];
+		}
+	}
+	return 0;
+}
+
+} //namespace
+
 /**
  * Gets new face colors for replacement, if 0 then don't replace colors.
  * @return Color index or 0.
  */
 int Armor::getFaceColor(int i) const
 {
-	if ((size_t)i < _faceColor.size())
-	{
-		return _faceColor[i];
-	}
-	else
-	{
-		return 0;
-	}
+	return findWithFallback(_faceColor, i);
 }
 
 /**
@@ -390,14 +821,7 @@ int Armor::getFaceColor(int i) const
  */
 int Armor::getHairColor(int i) const
 {
-	if ((size_t)i < _hairColor.size())
-	{
-		return _hairColor[i];
-	}
-	else
-	{
-		return 0;
-	}
+	return findWithFallback(_hairColor, i);
 }
 
 /**
@@ -406,14 +830,7 @@ int Armor::getHairColor(int i) const
  */
 int Armor::getUtileColor(int i) const
 {
-	if ((size_t)i < _utileColor.size())
-	{
-		return _utileColor[i];
-	}
-	else
-	{
-		return 0;
-	}
+	return findWithFallback(_utileColor, i);
 }
 
 /**
@@ -422,14 +839,7 @@ int Armor::getUtileColor(int i) const
  */
 int Armor::getRankColor(int i) const
 {
-	if ((size_t)i < _rankColor.size())
-	{
-		return _rankColor[(size_t)i];
-	}
-	else
-	{
-		return 0;
-	}
+	return findWithFallback(_rankColor, i);
 }
 
 /**
@@ -448,6 +858,147 @@ bool Armor::hasInventory() const
 const std::vector<std::string> &Armor::getUnits() const
 {
 	return _units;
+}
+
+namespace
+{
+
+void getArmorValueScript(Armor *ar, int &ret, int side)
+{
+	if (ar && 0 <= side && side < SIDE_MAX)
+	{
+		ret = ar->getArmor((UnitSide)side);
+		return;
+	}
+	ret = 0;
+}
+
+std::string debugDisplayScript(const Armor* ar)
+{
+	if (ar)
+	{
+		std::string s;
+		s += Armor::ScriptName;
+		s += "(name: \"";
+		s += ar->getType();
+		s += "\")";
+		return s;
+	}
+	else
+	{
+		return "null";
+	}
+}
+
+}
+
+/**
+ * Register Armor in script parser.
+ * @param parser Script parser.
+ */
+void Armor::ScriptRegister(ScriptParserBase* parser)
+{
+	Bind<Armor> ar = { parser };
+
+	ar.addCustomConst("SIDE_FRONT", SIDE_FRONT);
+	ar.addCustomConst("SIDE_LEFT", SIDE_LEFT);
+	ar.addCustomConst("SIDE_RIGHT", SIDE_RIGHT);
+	ar.addCustomConst("SIDE_REAR", SIDE_REAR);
+	ar.addCustomConst("SIDE_UNDER", SIDE_UNDER);
+
+	ar.add<&Armor::getDrawingRoutine>("getDrawingRoutine");
+	ar.add<&Armor::getVisibilityAtDark>("getVisibilityAtDark");
+	ar.add<&Armor::getVisibilityAtDay>("getVisibilityAtDay");
+	ar.add<&Armor::getPersonalLight>("getPersonalLight");
+	ar.add<&Armor::getSize>("getSize");
+
+	UnitStats::addGetStatsScript<Armor, &Armor::_stats>(ar, "Stats.");
+
+	ar.add<&getArmorValueScript>("getArmor");
+
+	ar.addScriptValue<&Armor::_scriptValues>(false);
+	ar.addDebugDisplay<&debugDisplayScript>();
+}
+
+/**
+ * Gets the index of the sprite in the CustomArmorPreview sprite set.
+ * @return Sprite index.
+ */
+const std::vector<int> &Armor::getCustomArmorPreviewIndex() const
+{
+	return _customArmorPreviewIndex;
+}
+
+/**
+ * Can you run while wearing this armor?
+ * @return True if you are allowed to run.
+ */
+bool Armor::allowsRunning(bool def) const
+{
+	return useTriBoolHelper(_allowsRunning, def);
+}
+
+/**
+ * Can you strafe while wearing this armor?
+ * @return True if you are allowed to strafe.
+ */
+bool Armor::allowsStrafing(bool def) const
+{
+	return useTriBoolHelper(_allowsStrafing, def);
+}
+
+/**
+ * Can you kneel while wearing this armor?
+ * @return True if you are allowed to kneel.
+ */
+bool Armor::allowsKneeling(bool def) const
+{
+	return useTriBoolHelper(_allowsKneeling, def);
+}
+
+/**
+ * Can you move while wearing this armor?
+ * @return True if you are allowed to move.
+ */
+bool Armor::allowsMoving() const
+{
+	return _allowsMoving;
+}
+
+/**
+ * Does this armor instantly recover any wounds after the battle?
+ * @return True if soldier should not get any recovery time.
+ */
+bool Armor::getInstantWoundRecovery() const
+{
+	return _instantWoundRecovery;
+}
+
+/**
+ * Returns a unit's height at standing in this armor.
+ * @return The unit's height.
+ */
+int Armor::getStandHeight() const
+{
+	return _standHeight;
+}
+
+/**
+ * Returns a unit's height at kneeling in this armor.
+ * @return The unit's kneeling height.
+ */
+int Armor::getKneelHeight() const
+{
+	return _kneelHeight;
+}
+
+/**
+ * Returns a unit's floating elevation in this armor.
+ * @return The unit's floating height.
+ */
+int Armor::getFloatHeight() const
+{
+	return _floatHeight;
 }
 
 }

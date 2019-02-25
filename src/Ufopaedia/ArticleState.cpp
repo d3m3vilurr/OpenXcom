@@ -24,7 +24,10 @@
 #include "../Engine/Surface.h"
 #include "../Engine/LocalizedText.h"
 #include "../Interface/TextButton.h"
+#include "../Mod/ArticleDefinition.h"
 #include "../Mod/RuleItem.h"
+#include "../Mod/Mod.h"
+#include "../Savegame/SavedGame.h"
 
 namespace OpenXcom
 {
@@ -41,6 +44,10 @@ namespace OpenXcom
 		_btnOk = new TextButton(30, 14, 5, 5);
 		_btnPrev = new TextButton(30, 14, 40, 5);
 		_btnNext = new TextButton(30, 14, 75, 5);
+		_btnInfo = new TextButton(40, 14, 110, 5);
+
+		// remember this article as seen/normal
+		_game->getSavedGame()->setUfopediaRuleStatus(_id, ArticleDefinition::PEDIA_STATUS_NORMAL);
 	}
 
 	/**
@@ -54,6 +61,9 @@ namespace OpenXcom
 		std::string type;
 		switch (dt)
 		{
+		case DT_NONE:
+			type = "STR_DAMAGE_NONE";
+			break;
 		case DT_AP:
 			type = "STR_DAMAGE_ARMOR_PIERCING";
 			break;
@@ -81,6 +91,36 @@ namespace OpenXcom
 		case DT_SMOKE:
 			type = "STR_DAMAGE_SMOKE";
 			break;
+		case DT_10:
+			type = "STR_DAMAGE_10";
+			break;
+		case DT_11:
+			type = "STR_DAMAGE_11";
+			break;
+		case DT_12:
+			type = "STR_DAMAGE_12";
+			break;
+		case DT_13:
+			type = "STR_DAMAGE_13";
+			break;
+		case DT_14:
+			type = "STR_DAMAGE_14";
+			break;
+		case DT_15:
+			type = "STR_DAMAGE_15";
+			break;
+		case DT_16:
+			type = "STR_DAMAGE_16";
+			break;
+		case DT_17:
+			type = "STR_DAMAGE_17";
+			break;
+		case DT_18:
+			type = "STR_DAMAGE_18";
+			break;
+		case DT_19:
+			type = "STR_DAMAGE_19";
+			break;
 		default:
 			type = "STR_UNKNOWN";
 			break;
@@ -97,6 +137,7 @@ namespace OpenXcom
 		add(_btnOk);
 		add(_btnPrev);
 		add(_btnNext);
+		add(_btnInfo);
 
 		_btnOk->setText(tr("STR_OK"));
 		_btnOk->onMouseClick((ActionHandler)&ArticleState::btnOkClick);
@@ -108,6 +149,10 @@ namespace OpenXcom
 		_btnNext->setText(">>");
 		_btnNext->onMouseClick((ActionHandler)&ArticleState::btnNextClick);
 		_btnNext->onKeyboardPress((ActionHandler)&ArticleState::btnNextClick, Options::keyGeoRight);
+		_btnInfo->setText(tr("STR_INFO_UFOPEDIA"));
+		_btnInfo->onMouseClick((ActionHandler)&ArticleState::btnInfoClick);
+		_btnInfo->onKeyboardPress((ActionHandler)&ArticleState::btnInfoClick, Options::keyGeoUfopedia);
+		_btnInfo->setVisible(false);
 	}
 
 	/**
@@ -135,6 +180,15 @@ namespace OpenXcom
 	void ArticleState::btnNextClick(Action *)
 	{
 		Ufopaedia::next(_game);
+	}
+
+	/**
+	 * Shows the detailed (raw) information about the current topic.
+	 * @param action Pointer to an action.
+	 */
+	void ArticleState::btnInfoClick(Action *)
+	{
+		Ufopaedia::openArticleDetail(_game, _id);
 	}
 
 }

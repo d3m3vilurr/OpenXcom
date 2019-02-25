@@ -49,6 +49,24 @@ ExtraSprites::~ExtraSprites()
 void ExtraSprites::load(const YAML::Node &node, int modIndex)
 {
 	_type = node["type"].as<std::string>(_type);
+
+	if (_type.empty())
+	{
+		std::string typeSingle;
+		typeSingle = node["typeSingle"].as<std::string>(typeSingle);
+		if (!typeSingle.empty())
+		{
+			_type = typeSingle;
+			_singleImage = true;
+		}
+		std::string fileSingle;
+		fileSingle = node["fileSingle"].as<std::string>(fileSingle);
+		if (!fileSingle.empty())
+		{
+			_sprites[0] = fileSingle;
+		}
+	}
+
 	_sprites = node["files"].as< std::map<int, std::string> >(_sprites);
 	_width = node["width"].as<int>(_width);
 	_height = node["height"].as<int>(_height);
@@ -177,7 +195,7 @@ Surface *ExtraSprites::loadSurface(Surface *surface)
 		delete surface;
 	}
 	surface = new Surface(_width, _height);
-	surface->loadImage(FileMap::getFilePath(_sprites.begin()->second));
+	surface->loadImage(_sprites.begin()->second);
 	return surface;
 }
 
@@ -220,15 +238,14 @@ SurfaceSet *ExtraSprites::loadSurfaceSet(SurfaceSet *set)
 		{
 			Log(LOG_VERBOSE) << "Loading surface set from folder: " << fileName << " starting at frame: " << startFrame;
 			int offset = startFrame;
-			const std::set<std::string> &contents = FileMap::getVFolderContents(fileName);
-			for (std::set<std::string>::iterator k = contents.begin(); k != contents.end(); ++k)
+			auto contents = FileMap::getVFolderContents(fileName);
+			for (auto k = contents.begin(); k != contents.end(); ++k)
 			{
 				if (!isImageFile(*k))
 					continue;
 				try
 				{
-					const std::string &fullPath = FileMap::getFilePath(fileName + *k);
-					getFrame(set, offset, adding)->loadImage(fullPath);
+					getFrame(set, offset, adding)->loadImage(fileName + *k);
 					offset++;
 				}
 				catch (Exception &e)
@@ -239,16 +256,15 @@ SurfaceSet *ExtraSprites::loadSurfaceSet(SurfaceSet *set)
 		}
 		else
 		{
-			const std::string &fullPath = FileMap::getFilePath(fileName);
 			if (!subdivision)
 			{
 				// TODO: Should we be passing "adding" here?
-				getFrame(set, startFrame, false)->loadImage(fullPath);
+				getFrame(set, startFrame, false)->loadImage(fileName);
 			}
 			else
 			{
 				Surface *temp = new Surface(_width, _height);
-				temp->loadImage(fullPath);
+				temp->loadImage(fileName);
 				int xDivision = _width / _subX;
 				int yDivision = _height / _subY;
 				int frames = xDivision * yDivision;

@@ -89,7 +89,7 @@ AbortMissionState::AbortMissionState(SavedBattleGame *battleGame, BattlescapeSta
 		exit = false;
 		for (int i = 0; i < _battleGame->getMapSizeXYZ(); ++i)
 		{
-			Tile *tile = _battleGame->getTiles()[i];
+			Tile *tile = _battleGame->getTile(i);
 			if (tile && tile->getMapData(O_FLOOR) && tile->getMapData(O_FLOOR)->getSpecialType() == END_POINT)
 			{
 				exit = true;
@@ -103,6 +103,9 @@ AbortMissionState::AbortMissionState(SavedBattleGame *battleGame, BattlescapeSta
 	{
 		if ((*i)->getOriginalFaction() == FACTION_PLAYER && !(*i)->isOut())
 		{
+			if ((*i)->isSummonedPlayerUnit())
+				continue;
+
 			if ((*i)->isInExitArea(START_POINT))
 			{
 				_inEntrance++;
@@ -126,11 +129,11 @@ AbortMissionState::AbortMissionState(SavedBattleGame *battleGame, BattlescapeSta
 	_txtInEntrance->setHighContrast(true);
 	if (craft)
 	{
-		_txtInEntrance->setText(tr("STR_UNITS_IN_CRAFT", _inEntrance));
+		_txtInEntrance->setText(tr("STR_UNITS_IN_CRAFT", _inEntrance));		
 	}
 	else
 	{
-		_txtInEntrance->setText(tr("STR_UNITS_IN_ENTRANCE", _inEntrance));
+		_txtInEntrance->setText(tr("STR_UNITS_IN_ENTRANCE", _inEntrance));		
 	}
 
 	_txtInExit->setBig();

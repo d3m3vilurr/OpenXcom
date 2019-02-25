@@ -17,10 +17,14 @@
  * You should have received a copy of the GNU General Public License
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <istream>
 #include <SDL.h>
 #include <string>
 #include <vector>
-#include <utility>
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
+#include <memory>
 
 namespace OpenXcom
 {
@@ -31,12 +35,10 @@ namespace OpenXcom
  */
 namespace CrossPlatform
 {
-#ifdef _WIN32
-	const char PATH_SEPARATOR = '\\';
-#else
-	const char PATH_SEPARATOR = '/';
-#endif
-
+	/// Retrieve and decode command-line arguments
+	void processArgs (int argc, char *argv[]);
+	/// Returns the command-line arguments
+	const std::vector<std::string>& getArgs();
 	/// Gets the available error dialog.
 	void getErrorDialog();
 	/// Displays an error message.
@@ -58,9 +60,9 @@ namespace CrossPlatform
 	/// Creates a folder.
 	bool createFolder(const std::string &path);
 	/// Terminates a path.
-	std::string endPath(const std::string &path);
-	/// Returns the list of files in a folder.
-	std::vector<std::string> getFolderContents(const std::string &path, const std::string &ext = "");
+	std::string convertPath(const std::string &path);
+	/// Returns the list of files in a folder as a vector of tuples (filename, id_dir, mtime)
+	std::vector<std::tuple<std::string, bool, time_t>> getFolderContents(const std::string &path, const std::string &ext = "");
 	/// Checks if the path is an existing folder.
 	bool folderExists(const std::string &path);
 	/// Checks if the path is an existing file.
@@ -87,18 +89,48 @@ namespace CrossPlatform
 	std::pair<std::string, std::string> timeToString(time_t time);
 	/// Move/rename a file between paths.
 	bool moveFile(const std::string &src, const std::string &dest);
+	/// Writes out a file
+	bool writeFile(const std::string& filename, const std::string& data);
+	bool writeFile(const std::string& filename, const std::vector<unsigned char>& data);
+	/// Reads in a file
+	std::unique_ptr<std::istream> readFile(const std::string& filename);
 	/// Flashes the game window.
-	void flashWindow();
+	void flashWindow(SDL_Window *winPtr);
 	/// Gets the DOS-style executable path.
 	std::string getDosPath();
 	/// Sets the window icon.
-	void setWindowIcon(int winResource, const std::string &unixPath);
+	void setWindowIcon(int winResource, const std::string &unixPath, SDL_Window *winPtr);
+	/// Displays the data finding dialog.
+	void findDirDialog();
+	/// Sets system UI visibility
+	void setSystemUI();
 	/// Produces a stack trace.
 	void stackTrace(void *ctx);
 	/// Produces a quick timestamp.
 	std::string now();
 	/// Produces a crash dump.
 	void crashDump(void *ex, const std::string &err);
+
+#ifdef __ANDROID__
+	/// This function is called from Java.
+#ifdef __cplusplus
+extern "C" {
+#endif
+	void Java_org_libsdl_openxcom_OpenXcom_nativeSetPaths(JNIEnv* env, jclass cls, jstring gamePath, jstring savePath, jstring confPath);
+#ifdef __cplusplus
+}
+#endif
+#endif
+	/// Gets system version
+	int getSystemVersion();
+        /// Gets pointing device status (emulates SDL_GetMouseState)
+        int getPointerState(int *x, int *y);
+
+	/// Log something.
+	void log(int, const std::ostringstream& msg);
+	/// The log file name
+	void setLogFileName(const std::string &path);
+	const std::string& getLogFileName();
 }
 
 }

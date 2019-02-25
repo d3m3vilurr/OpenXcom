@@ -18,7 +18,6 @@
  */
 #include "NewBattleState.h"
 #include <cmath>
-#include <fstream>
 #include <algorithm>
 #include <yaml-cpp/yaml.h>
 #include "../Engine/Game.h"
@@ -175,7 +174,7 @@ NewBattleState::NewBattleState() : _craft(0)
 	for (std::vector<std::string>::const_iterator i = crafts.begin(); i != crafts.end(); ++i)
 	{
 		RuleCraft *rule = _game->getMod()->getCraft(*i);
-		if (rule->getSoldiers() > 0)
+		if (rule->getSoldiers() > 0 && rule->getAllowLanding())
 		{
 			_crafts.push_back(*i);
 		}
@@ -212,6 +211,11 @@ NewBattleState::NewBattleState() : _craft(0)
 	_cbxAlienRace->setOptions(_alienRaces, true);
 
 	_slrAlienTech->setRange(0, _game->getMod()->getAlienItemLevels().size()-1);
+	if (_game->getMod()->getAlienItemLevels().size() <= 1)
+	{
+		_slrAlienTech->setVisible(false);
+		_txtAlienTech->setVisible(false);
+	}
 
 	_btnEquip->setText(tr("STR_EQUIP_CRAFT"));
 	_btnEquip->onMouseClick((ActionHandler)&NewBattleState::btnEquipClick);
@@ -267,7 +271,7 @@ void NewBattleState::load(const std::string &filename)
 	{
 		try
 		{
-			YAML::Node doc = YAML::LoadFile(s);
+			YAML::Node doc = YAML::Load(*CrossPlatform::readFile(s));
 			_cbxMission->setSelected(std::min(doc["mission"].as<size_t>(0), _missionTypes.size() - 1));
 			cbxMissionChange(0);
 			_cbxCraft->setSelected(std::min(doc["craft"].as<size_t>(0), _crafts.size() - 1));
@@ -288,10 +292,9 @@ void NewBattleState::load(const std::string &filename)
 				save->getBases()->push_back(base);
 
 				// Add research
-				const std::vector<std::string> &research = mod->getResearchList();
-				for (std::vector<std::string>::const_iterator i = research.begin(); i != research.end(); ++i)
+				for (auto& pair : mod->getResearchMap())
 				{
-					save->addFinishedResearchSimple(mod->getResearch(*i));
+					save->addFinishedResearchSimple(pair.second);
 				}
 
 				// Generate items
@@ -347,15 +350,7 @@ void NewBattleState::load(const std::string &filename)
  */
 void NewBattleState::save(const std::string &filename)
 {
-	std::string s = Options::getMasterUserFolder() + filename + ".cfg";
-	std::ofstream sav(s.c_str());
-	if (!sav)
-	{
-		Log(LOG_WARNING) << "Failed to save " << filename << ".cfg";
-		return;
-	}
 	YAML::Emitter out;
-
 	YAML::Node node;
 	node["mission"] = _cbxMission->getSelected();
 	node["craft"] = _cbxCraft->getSelected();
@@ -367,11 +362,11 @@ void NewBattleState::save(const std::string &filename)
 	node["base"] = _game->getSavedGame()->getBases()->front()->save();
 	out << node;
 
-	sav << out.c_str();
-	sav.close();
-	if (!sav)
+	std::string filepath = Options::getMasterUserFolder() + filename + ".cfg";
+	if (!CrossPlatform::writeFile(filepath, out.c_str()))
 	{
-		Log(LOG_WARNING) << "Failed to save " << filename << ".cfg";
+		Log(LOG_WARNING) << "Failed to save " << filepath;
+		return;
 	}
 }
 
@@ -438,19 +433,19 @@ void NewBattleState::initSave()
 		RuleItem *rule = _game->getMod()->getItem(*i);
 		if (rule->getBattleType() != BT_CORPSE && rule->isRecoverable())
 		{
-			base->getStorageItems()->addItem(*i, 1);
+			int howMany = rule->getBattleType() == BT_AMMO ? 2 : 1;
+			base->getStorageItems()->addItem(*i, howMany);
 			if (rule->getBattleType() != BT_NONE && !rule->isFixed() && rule->getBigSprite() > -1)
 			{
-				_craft->getItems()->addItem(*i, 1);
+				_craft->getItems()->addItem(*i, howMany);
 			}
 		}
 	}
 
 	// Add research
-	const std::vector<std::string> &research = mod->getResearchList();
-	for (std::vector<std::string>::const_iterator i = research.begin(); i != research.end(); ++i)
+	for (auto& pair : mod->getResearchMap())
 	{
-		save->addFinishedResearchSimple(mod->getResearch(*i));
+		save->addFinishedResearchSimple(pair.second);
 	}
 
 	_game->setSavedGame(save);
@@ -469,7 +464,7 @@ void NewBattleState::btnOkClick(Action *)
 		return;
 	}
 
-	SavedBattleGame *bgame = new SavedBattleGame();
+	SavedBattleGame *bgame = new SavedBattleGame(_game->getMod());
 	_game->getSavedGame()->setBattleGame(bgame);
 	bgame->setMissionType(_missionTypes[_cbxMission->getSelected()]);
 	BattlescapeGenerator bgen = BattlescapeGenerator(_game);
@@ -487,7 +482,7 @@ void NewBattleState::btnOkClick(Action *)
 	// alien base
 	else if (_game->getMod()->getDeployment(bgame->getMissionType())->isAlienBase())
 	{
-		AlienBase *b = new AlienBase(_game->getMod()->getDeployment(bgame->getMissionType()));
+		AlienBase *b = new AlienBase(_game->getMod()->getDeployment(bgame->getMissionType()), -1);
 		b->setId(1);
 		b->setAlienRace(_alienRaces[_cbxAlienRace->getSelected()]);
 		_craft->setDestination(b);
@@ -497,7 +492,7 @@ void NewBattleState::btnOkClick(Action *)
 	// ufo assault
 	else if (_craft && _game->getMod()->getUfo(_missionTypes[_cbxMission->getSelected()]))
 	{
-		Ufo *u = new Ufo(_game->getMod()->getUfo(_missionTypes[_cbxMission->getSelected()]));
+		Ufo *u = new Ufo(_game->getMod()->getUfo(_missionTypes[_cbxMission->getSelected()]), 1);
 		u->setId(1);
 		_craft->setDestination(u);
 		bgen.setUfo(u);
@@ -519,7 +514,7 @@ void NewBattleState::btnOkClick(Action *)
 	{
 		const AlienDeployment *deployment = _game->getMod()->getDeployment(bgame->getMissionType());
 		const RuleAlienMission *mission = _game->getMod()->getAlienMission(_game->getMod()->getAlienMissionList().front()); // doesn't matter
-		MissionSite *m = new MissionSite(mission, deployment);
+		MissionSite *m = new MissionSite(mission, deployment, nullptr);
 		m->setId(1);
 		m->setAlienRace(_alienRaces[_cbxAlienRace->getSelected()]);
 		_craft->setDestination(m);

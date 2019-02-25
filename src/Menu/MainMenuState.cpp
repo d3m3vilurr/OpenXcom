@@ -71,7 +71,7 @@ MainMenuState::MainMenuState()
 	centerAllSurfaces();
 
 	// Set up objects
-	_window->setBackground(_game->getMod()->getSurface("BACK01.SCR"));
+	setWindowBackground(_window, "mainMenu");
 
 	_btnNewGame->setText(tr("STR_NEW_GAME"));
 	_btnNewGame->onMouseClick((ActionHandler)&MainMenuState::btnNewGameClick);
@@ -94,6 +94,16 @@ MainMenuState::MainMenuState()
 	title << tr("STR_OPENXCOM") << Unicode::TOK_NL_SMALL;
 	title << OPENXCOM_VERSION_SHORT << OPENXCOM_VERSION_GIT;
 	_txtTitle->setText(title.str());
+}
+
+void MainMenuState::init()
+{
+	State::init();
+	if (Options::getLoadLastSave() && _game->getSavedGame()->getList(_game->getLanguage(), true).size() > 0)
+	{
+		Log(LOG_INFO) << "Loading last saved game";
+		btnLoadClick(NULL);
+	}
 }
 
 /**

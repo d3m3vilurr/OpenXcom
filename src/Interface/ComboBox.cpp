@@ -129,7 +129,7 @@ void ComboBox::setY(int y)
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void ComboBox::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void ComboBox::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	_button->setPalette(colors, firstcolor, ncolors);
@@ -335,7 +335,7 @@ void ComboBox::setOptions(const std::vector<std::string> &options, bool translat
  * Blits the combo box components.
  * @param surface Pointer to surface to blit onto.
  */
-void ComboBox::blit(Surface *surface)
+void ComboBox::blit(SDL_Surface *surface)
 {
 	Surface::blit(surface);
 	_list->invalidate();

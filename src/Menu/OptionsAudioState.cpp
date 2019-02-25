@@ -44,7 +44,7 @@ OptionsAudioState::OptionsAudioState(OptionsOrigin origin) : OptionsBaseState(or
 {
 	setCategory(_btnAudio);
 
-	// Create objects
+	// Create object
 	_txtMusicVolume = new Text(114, 9, 94, 8);
 	_slrMusicVolume = new Slider(104, 16, 94, 18);
 
@@ -86,7 +86,7 @@ OptionsAudioState::OptionsAudioState(OptionsOrigin origin) : OptionsBaseState(or
 
 	centerAllSurfaces();
 
-	// Set up objects
+	// Set up object
 	_txtMusicVolume->setText(tr("STR_MUSIC_VOLUME"));
 
 	_slrMusicVolume->setRange(0, SDL_MIX_MAXVOLUME);
@@ -144,7 +144,8 @@ OptionsAudioState::OptionsAudioState(OptionsOrigin origin) : OptionsBaseState(or
 	_cbxMusicFormat->onMouseIn((ActionHandler)&OptionsAudioState::txtTooltipIn);
 	_cbxMusicFormat->onMouseOut((ActionHandler)&OptionsAudioState::txtTooltipOut);
 
-	std::string curMusic = musFormats[Mix_GetMusicType(0)];
+	std::string curMusic = musFormats[Mix_GetMusicType(0)]; // this is confusing
+	// since  both GM (GM.CAT) and MIDI (*.mid) are the same from SDL_mixer POV.
 	_txtCurrentMusic->setText(tr("STR_CURRENT_FORMAT").arg(curMusic));
 
 	_txtSoundFormat->setText(tr("STR_PREFERRED_SFX_FORMAT"));

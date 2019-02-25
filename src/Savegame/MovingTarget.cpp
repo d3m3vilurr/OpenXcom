@@ -240,6 +240,9 @@ void MovingTarget::calculateMeetPoint()
 		_meetPointLon = _lon;
 	}
 
+	// ***IMPORTANT*** this functionality has been disabled until further notice, most probably forever
+#if 0
+
 	if (!_dest || !Options::meetingPoint) return;
 
 	MovingTarget *t = dynamic_cast<MovingTarget*>(_dest);
@@ -282,6 +285,7 @@ void MovingTarget::calculateMeetPoint()
 	if (std::abs(_meetPointLat) > M_PI_2) { _meetPointLat = latSign * std::abs(2 * M_PI - std::abs(_meetPointLat)); _meetPointLon -= lonSign * M_PI; }
 
 	_meetCalculated = true;
+#endif
 }
 
 /**

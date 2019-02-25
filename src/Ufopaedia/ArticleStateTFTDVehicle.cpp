@@ -34,15 +34,19 @@ namespace OpenXcom
 
 	ArticleStateTFTDVehicle::ArticleStateTFTDVehicle(ArticleDefinitionTFTD *defs) : ArticleStateTFTD(defs)
 	{
-		Unit *unit = _game->getMod()->getUnit(defs->id, true);
-		Armor *armor = _game->getMod()->getArmor(unit->getArmor(), true);
 		RuleItem *item = _game->getMod()->getItem(defs->id, true);
+		Unit *unit = item->getVehicleUnit();
+		if (!unit)
+		{
+			throw Exception("Item " + defs->id + " do not have vehicle unit defined");
+		}
+		Armor *armor = unit->getArmor();
 
 		_lstStats = new TextList(150, 65, 168, 106);
 
 		add(_lstStats);
 
-		_lstStats->setColor(Palette::blockOffset(0)+2);
+		_lstStats->setColor(_listColor1);
 		_lstStats->setColumns(2, 100, 50);
 		_lstStats->setDot(true);
 
@@ -50,7 +54,7 @@ namespace OpenXcom
 
 		add(_lstStats2);
 
-		_lstStats2->setColor(Palette::blockOffset(0) + 2);
+		_lstStats2->setColor(_listColor1);
 		_lstStats2->setColumns(2, 65, 130);
 		_lstStats2->setDot(true);
 
@@ -67,11 +71,11 @@ namespace OpenXcom
 		_lstStats->addRow(2, tr("STR_FRONT_ARMOR").c_str(), ss3.str().c_str());
 
 		std::ostringstream ss4;
-		ss4 << armor->getSideArmor();
+		ss4 << armor->getLeftSideArmor();
 		_lstStats->addRow(2, tr("STR_LEFT_ARMOR").c_str(), ss4.str().c_str());
 
 		std::ostringstream ss5;
-		ss5 << armor->getSideArmor();
+		ss5 << armor->getRightSideArmor();
 		_lstStats->addRow(2, tr("STR_RIGHT_ARMOR").c_str(), ss5.str().c_str());
 
 		std::ostringstream ss6;
@@ -84,9 +88,9 @@ namespace OpenXcom
 
 		_lstStats2->addRow(2, tr("STR_WEAPON").c_str(), tr(defs->weapon).c_str());
 
-		if (!item->getCompatibleAmmo()->empty())
+		if (!item->getPrimaryCompatibleAmmo()->empty())
 		{
-			RuleItem *ammo = _game->getMod()->getItem(item->getCompatibleAmmo()->front(), true);
+			RuleItem *ammo = _game->getMod()->getItem(item->getPrimaryCompatibleAmmo()->front(), true);
 
 			std::ostringstream ss8;
 			ss8 << ammo->getPower();
@@ -115,11 +119,11 @@ namespace OpenXcom
 
 		for (size_t i = 0; i != _lstStats->getRows(); ++i)
 		{
-			_lstStats->setCellColor(i, 1, Palette::blockOffset(15)+4);
+			_lstStats->setCellColor(i, 1, _listColor2);
 		}
 		for (size_t i = 0; i != _lstStats2->getRows(); ++i)
 		{
-			_lstStats2->setCellColor(i, 1, Palette::blockOffset(15) + 4);
+			_lstStats2->setCellColor(i, 1, _listColor2);
 		}
 
 		centerAllSurfaces();

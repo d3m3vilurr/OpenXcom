@@ -152,6 +152,13 @@ void LoadGameState::think()
 	{
 		_game->popState();
 
+		// Remember for later (palette reset)
+		BattlescapeState *origBattleState = 0;
+		if (_game->getSavedGame() != 0 && _game->getSavedGame()->getSavedBattle() != 0)
+		{
+			origBattleState = _game->getSavedGame()->getSavedBattle()->getBattleState();
+		}
+
 		// Load the game
 		SavedGame *s = new SavedGame();
 		try
@@ -170,6 +177,11 @@ void LoadGameState::think()
 				Options::baseXResolution = Options::baseXGeoscape;
 				Options::baseYResolution = Options::baseYGeoscape;
 				_game->getScreen()->resetDisplay(false);
+				if (origBattleState != 0)
+				{
+					// We need to reset palettes here already, can't wait for the destructor
+					origBattleState->resetPalettes();
+				}
 				_game->setState(new GeoscapeState);
 				if (_game->getSavedGame()->getSavedBattle() != 0)
 				{
@@ -191,7 +203,7 @@ void LoadGameState::think()
 		{
 			error(e.what(), s);
 		}
-		CrossPlatform::flashWindow();
+		CrossPlatform::flashWindow(_game->getScreen()->getWindow());
 	}
 }
 
@@ -206,7 +218,7 @@ void LoadGameState::error(const std::string &msg, SavedGame *save)
 
 	Log(LOG_ERROR) << msg;
 	std::ostringstream error;
-	error << tr("STR_LOAD_UNSUCCESSFUL") << Unicode::TOK_NL_SMALL << Unicode::convPathToUtf8(msg);
+	error << tr("STR_LOAD_UNSUCCESSFUL") << Unicode::TOK_NL_SMALL << msg;
 	if (_origin != OPT_BATTLESCAPE)
 		_game->pushState(new ErrorMessageState(error.str(), _palette, _game->getMod()->getInterface("errorMessages")->getElement("geoscapeColor")->color, "BACK01.SCR", _game->getMod()->getInterface("errorMessages")->getElement("geoscapePalette")->color));
 	else

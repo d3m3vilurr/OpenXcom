@@ -33,6 +33,7 @@
 #include "../Savegame/SoldierDiary.h"
 #include "../Mod/RuleCommendations.h"
 #include "../Engine/Action.h"
+#include "../Ufopaedia/Ufopaedia.h"
 
 namespace OpenXcom
 {
@@ -67,7 +68,7 @@ SoldierDiaryPerformanceState::SoldierDiaryPerformanceState(Base *base, size_t so
 	_lstPerformance = new TextList(288, 128, 8, 28);
 	_lstKillTotals = new TextList(302, 9, 8, 164);
 	_lstMissionTotals = new TextList(302, 9, 8, 164);
-	// Commendation stats
+	// Commendation stat
 	_txtMedalName = new Text(120, 18, 16, 36);
 	_txtMedalLevel = new Text(120, 18, 186, 36);
 	_txtMedalInfo = new Text(280, 32, 20, 135);
@@ -167,6 +168,7 @@ SoldierDiaryPerformanceState::SoldierDiaryPerformanceState(Base *base, size_t so
 	_lstCommendations->onMouseOver((ActionHandler)&SoldierDiaryPerformanceState::lstInfoMouseOver);
 	_lstCommendations->onMouseOut((ActionHandler)&SoldierDiaryPerformanceState::lstInfoMouseOut);
 	_lstCommendations->onMousePress((ActionHandler)&SoldierDiaryPerformanceState::handle);
+	_lstCommendations->onMouseClick((ActionHandler)&SoldierDiaryPerformanceState::lstInfoMouseClick);
 
 	if (_display == DIARY_KILLS)
 	{
@@ -238,6 +240,7 @@ void SoldierDiaryPerformanceState::init()
 	_lstKillTotals->clearList();
 	_lstMissionTotals->clearList();
 	_commendationsListEntry.clear();
+	_commendationsNames.clear();
 	_txtTitle->setText(_soldier->getName());
 	_lstPerformance->clearList();
 	_lstCommendations->clearList();
@@ -286,7 +289,7 @@ void SoldierDiaryPerformanceState::init()
 		{
 			_lstPerformance->addRow(1, tr(titleArray[i]).c_str());
 			_lstPerformance->setRowColor(_lstPerformance->getRows() - 1, _lstPerformance->getSecondaryColor());
-			for (std::map<std::string, int>::const_iterator j = mapArray[i].begin(); j != mapArray[i].end(); ++j)
+			for (std::map<std::string, int>::const_iterator j = mapArray[i].begin() ; j != mapArray[i].end() ; ++j)
 			{
 				if ((*j).first == "NO_UFO") continue;
 				std::ostringstream ss;
@@ -308,17 +311,18 @@ void SoldierDiaryPerformanceState::init()
 	{
 		for (std::vector<SoldierCommendations*>::const_iterator i = _soldier->getDiary()->getSoldierCommendations()->begin(); i != _soldier->getDiary()->getSoldierCommendations()->end(); ++i)
 		{
-			RuleCommendations *commendation = _game->getMod()->getCommendation((*i)->getType());
-			if ((*i)->getNoun() != "noNoun")
-			{
-				_lstCommendations->addRow(2, tr((*i)->getType()).arg(tr((*i)->getNoun())).c_str(), tr((*i)->getDecorationDescription()).c_str());
-				_commendationsListEntry.push_back(tr(commendation->getDescription()).arg(tr((*i)->getNoun())));
-			}
-			else
-			{
-				_lstCommendations->addRow(2, tr((*i)->getType()).c_str(), tr((*i)->getDecorationDescription()).c_str());
-				_commendationsListEntry.push_back(tr(commendation->getDescription()));
-			}
+		RuleCommendations *commendation = _game->getMod()->getCommendation((*i)->getType());
+		if ((*i)->getNoun() != "noNoun")
+		{
+			_lstCommendations->addRow(2, tr((*i)->getType()).arg(tr((*i)->getNoun())).c_str(), tr((*i)->getDecorationDescription()).c_str());
+			_commendationsListEntry.push_back(tr(commendation->getDescription()).arg(tr((*i)->getNoun())));
+		}
+		else
+		{
+			_lstCommendations->addRow(2, tr((*i)->getType()).c_str(), tr((*i)->getDecorationDescription()).c_str());
+			_commendationsListEntry.push_back(tr(commendation->getDescription()));
+		}
+		_commendationsNames.push_back((*i)->getType());
 		}
 		drawSprites();
 	}
@@ -360,16 +364,12 @@ void SoldierDiaryPerformanceState::drawSprites()
 		int _decorationSprite = (*i)->getDecorationLevelInt();
 
 		// Handle commendation sprites
-		_commendationSprite->getFrame(_sprite)->setX(0);
-		_commendationSprite->getFrame(_sprite)->setY(0);
-		_commendationSprite->getFrame(_sprite)->blit(_commendations[vectorIterator - scrollDepth]);
+		_commendationSprite->getFrame(_sprite)->blitNShade(_commendations[vectorIterator - scrollDepth], 0, 0);
 
 		// Handle commendation decoration sprites
 		if (_decorationSprite != 0)
 		{
-			_commendationDecoration->getFrame(_decorationSprite)->setX(0);
-			_commendationDecoration->getFrame(_decorationSprite)->setY(0);
-			_commendationDecoration->getFrame(_decorationSprite)->blit(_commendationDecorations[vectorIterator - scrollDepth]);
+			_commendationDecoration->getFrame(_decorationSprite)->blitNShade(_commendationDecorations[vectorIterator - scrollDepth], 0, 0);
 		}
 
 		vectorIterator++;
@@ -462,6 +462,14 @@ void SoldierDiaryPerformanceState::lstInfoMouseOver(Action *)
 void SoldierDiaryPerformanceState::lstInfoMouseOut(Action *)
 {
 	_txtMedalInfo->setText("");
+}
+
+/*
+*
+*/
+void SoldierDiaryPerformanceState::lstInfoMouseClick(Action *)
+{
+	Ufopaedia::openArticle(_game, _commendationsNames[_lstCommendations->getSelectedRow()]);
 }
 
 /**

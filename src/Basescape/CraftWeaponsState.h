@@ -24,6 +24,7 @@ namespace OpenXcom
 {
 
 class Base;
+class Craft;
 class TextButton;
 class Window;
 class Text;
@@ -38,11 +39,12 @@ class CraftWeaponsState : public State
 {
 private:
 	Base *_base;
-	size_t _craft, _weapon;
+	Craft *_craft;
+	size_t _weapon;
 
 	TextButton *_btnCancel;
 	Window *_window;
-	Text *_txtTitle, *_txtArmament, *_txtQuantity, *_txtAmmunition;
+	Text *_txtTitle, *_txtArmament, *_txtQuantity, *_txtAmmunition, *_txtCurrentWeapon;
 	TextList *_lstWeapons;
 	std::vector<RuleCraftWeapon*> _weapons;
 public:
@@ -54,6 +56,8 @@ public:
 	void btnCancelClick(Action *action);
 	/// Handler for clicking the Weapons list.
 	void lstWeaponsClick(Action *action);
+	/// Handler for middle clicking the Weapons list.
+	void lstWeaponsMiddleClick(Action *action);
 };
 
 }

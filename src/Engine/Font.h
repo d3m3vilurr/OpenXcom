@@ -25,6 +25,8 @@
 #include <yaml-cpp/yaml.h>
 #include "Unicode.h"
 
+#include "Surface.h"
+
 namespace OpenXcom
 {
 
@@ -62,7 +64,7 @@ public:
 	/// Generate the terminal font.
 	void loadTerminal();
 	/// Gets a particular character from the font, with its real size.
-	Surface *getChar(UCode c);
+	SurfaceCrop getChar(UCode c);
 	/// Gets the font's character width.
 	int getWidth() const;
 	/// Gets the font's character height.
@@ -74,7 +76,7 @@ public:
 	/// Gets the font's palette.
 	SDL_Color *getPalette() const;
 	/// Sets the font's palette.
-	void setPalette(SDL_Color *colors, int firstcolor, int ncolors);
+	void setPalette(const SDL_Color *colors, int firstcolor, int ncolors);
 };
 
 }

@@ -155,7 +155,7 @@ Uint8 Slider::getColor() const
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void Slider::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void Slider::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	_txtMinus->setPalette(colors, firstcolor, ncolors);
@@ -218,7 +218,13 @@ void Slider::setRange(int min, int max)
  */
 void Slider::setValue(int value)
 {
-	if (_min < _max)
+	if (_min == _max)
+	{
+		_value = 0;
+		setPosition(0.0);
+		return;
+	}
+	else if (_min < _max)
 	{
 		_value = Clamp(value, _min, _max);
 	}
@@ -243,7 +249,7 @@ int Slider::getValue() const
  * Blits the slider contents
  * @param surface Pointer to surface to blit onto.
  */
-void Slider::blit(Surface *surface)
+void Slider::blit(SDL_Surface *surface)
 {
 	Surface::blit(surface);
 	if (_visible && !_hidden)

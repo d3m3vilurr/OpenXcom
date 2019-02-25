@@ -20,13 +20,11 @@
 #include "Options.h"
 #include "../version.h"
 #include <SDL.h>
-#include <SDL_keysym.h>
 #include <SDL_mixer.h>
-#include <stdio.h>
-#include <iostream>
 #include <map>
+#include <unordered_map>
 #include <sstream>
-#include <fstream>
+#include <iostream>
 #include <algorithm>
 #include <yaml-cpp/yaml.h>
 #include "Exception.h"
@@ -34,6 +32,7 @@
 #include "CrossPlatform.h"
 #include "FileMap.h"
 #include "Screen.h"
+#include "Unicode.h"
 
 namespace OpenXcom
 {
@@ -51,14 +50,17 @@ std::string _configFolder;
 std::vector<std::string> _userList;
 std::map<std::string, std::string> _commandLine;
 std::vector<OptionInfo> _info;
-std::map<std::string, ModInfo> _modInfos;
+std::unordered_map<std::string, ModInfo> _modInfos;
 std::string _masterMod;
+bool _loadLastSave = false;
+bool _loadLastSaveExpended = false;
 
 /**
  * Sets up the options by creating their OptionInfo metadata.
  */
 void create()
 {
+	if (!_info.empty()) { _info.clear(); }
 #ifdef DINGOO
 	_info.push_back(OptionInfo("displayWidth", &displayWidth, Screen::ORIGINAL_WIDTH));
 	_info.push_back(OptionInfo("displayHeight", &displayHeight, Screen::ORIGINAL_HEIGHT));
@@ -78,9 +80,14 @@ void create()
 	_info.push_back(OptionInfo("keyboardMode", (int*)&keyboardMode, KEYBOARD_ON));
 #endif
 
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("maxFrameSkip", &maxFrameSkip, 0, "STR_FRAMESKIP", "STR_GENERAL"));
+#else
 	_info.push_back(OptionInfo("maxFrameSkip", &maxFrameSkip, 0));
+#endif
 	_info.push_back(OptionInfo("traceAI", &traceAI, false));
 	_info.push_back(OptionInfo("verboseLogging", &verboseLogging, false));
+	_info.push_back(OptionInfo("listVFSContents", &listVFSContents, false));
 	_info.push_back(OptionInfo("StereoSound", &StereoSound, true));
 	//_info.push_back(OptionInfo("baseXResolution", &baseXResolution, Screen::ORIGINAL_WIDTH));
 	//_info.push_back(OptionInfo("baseYResolution", &baseYResolution, Screen::ORIGINAL_HEIGHT));
@@ -105,14 +112,27 @@ void create()
 	_info.push_back(OptionInfo("uiVolume", &uiVolume, MIX_MAX_VOLUME/3));
 	_info.push_back(OptionInfo("language", &language, ""));
 	_info.push_back(OptionInfo("battleScrollSpeed", &battleScrollSpeed, 8));
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("battleEdgeScroll", (int*)&battleEdgeScroll, SCROLL_NONE));
+#else
 	_info.push_back(OptionInfo("battleEdgeScroll", (int*)&battleEdgeScroll, SCROLL_AUTO));
-	_info.push_back(OptionInfo("battleDragScrollButton", &battleDragScrollButton, SDL_BUTTON_MIDDLE));
+#endif
+
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("battleDragScrollButton", &battleDragScrollButton, SDL_BUTTON_LEFT));
+#else
+	_info.push_back(OptionInfo("battleDragScrollButton", &battleDragScrollButton, 0));
+#endif
 	_info.push_back(OptionInfo("dragScrollTimeTolerance", &dragScrollTimeTolerance, 300)); // miliSecond
-	_info.push_back(OptionInfo("dragScrollPixelTolerance", &dragScrollPixelTolerance, 10)); // count of pixels
+	_info.push_back(OptionInfo("dragScrollPixelTolerance", &dragScrollPixelTolerance, 10)); // count of pixel
 	_info.push_back(OptionInfo("battleFireSpeed", &battleFireSpeed, 6));
 	_info.push_back(OptionInfo("battleXcomSpeed", &battleXcomSpeed, 30));
 	_info.push_back(OptionInfo("battleAlienSpeed", &battleAlienSpeed, 30));
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("battleNewPreviewPath", (int*)&battleNewPreviewPath, PATH_FULL)); // for android, set full preview by default
+#else
 	_info.push_back(OptionInfo("battleNewPreviewPath", (int*)&battleNewPreviewPath, PATH_NONE)); // requires double-click to confirm moves
+#endif
 	_info.push_back(OptionInfo("fpsCounter", &fpsCounter, false));
 	_info.push_back(OptionInfo("globeDetail", &globeDetail, true));
 	_info.push_back(OptionInfo("globeRadarLines", &globeRadarLines, true));
@@ -139,16 +159,28 @@ void create()
 	_info.push_back(OptionInfo("geoClockSpeed", &geoClockSpeed, 80));
 	_info.push_back(OptionInfo("dogfightSpeed", &dogfightSpeed, 30));
 	_info.push_back(OptionInfo("geoScrollSpeed", &geoScrollSpeed, 20));
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("geoDragScrollButton", &geoDragScrollButton, SDL_BUTTON_LEFT));
+#else
 	_info.push_back(OptionInfo("geoDragScrollButton", &geoDragScrollButton, SDL_BUTTON_MIDDLE));
+#endif
 	_info.push_back(OptionInfo("preferredMusic", (int*)&preferredMusic, MUSIC_AUTO));
 	_info.push_back(OptionInfo("preferredSound", (int*)&preferredSound, SOUND_AUTO));
 	_info.push_back(OptionInfo("preferredVideo", (int*)&preferredVideo, VIDEO_FMV));
 	_info.push_back(OptionInfo("musicAlwaysLoop", &musicAlwaysLoop, false));
+#ifdef __MOBILE
+	_info.push_back(OptionInfo("touchEnabled", &touchEnabled, true));
+#else
 	_info.push_back(OptionInfo("touchEnabled", &touchEnabled, false));
+#endif
 	_info.push_back(OptionInfo("rootWindowedMode", &rootWindowedMode, false));
 	_info.push_back(OptionInfo("lazyLoadResources", &lazyLoadResources, true));
+	// SDL2 scaler options
+	_info.push_back(OptionInfo("useNearestScaler", &useNearestScaler, false));
+	_info.push_back(OptionInfo("useLinearScaler", &useLinearScaler, true));
+	_info.push_back(OptionInfo("useAnisotropicScaler", &useAnisotropicScaler, false));
 
-	// advanced options
+	// advanced option
 	_info.push_back(OptionInfo("playIntro", &playIntro, true, "STR_PLAYINTRO", "STR_GENERAL"));
 	_info.push_back(OptionInfo("autosave", &autosave, true, "STR_AUTOSAVE", "STR_GENERAL"));
 	_info.push_back(OptionInfo("autosaveFrequency", &autosaveFrequency, 5, "STR_AUTOSAVE_FREQUENCY", "STR_GENERAL"));
@@ -158,7 +190,7 @@ void create()
 	_info.push_back(OptionInfo("soldierDiaries", &soldierDiaries, true));
 
 // this should probably be any small screen touch-device, i don't know the defines for all of them so i'll cover android and IOS as i imagine they're more common
-#ifdef __ANDROID_API__
+#ifdef __MOBILE__
 	_info.push_back(OptionInfo("maximizeInfoScreens", &maximizeInfoScreens, true, "STR_MAXIMIZE_INFO_SCREENS", "STR_GENERAL"));
 #elif __APPLE__
 	// todo: ask grussel how badly i messed this up.
@@ -171,7 +203,11 @@ void create()
 #else
 	_info.push_back(OptionInfo("maximizeInfoScreens", &maximizeInfoScreens, false, "STR_MAXIMIZE_INFO_SCREENS", "STR_GENERAL"));
 #endif
-
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("listDragScroll", &listDragScroll, true, "STR_LISTDRAGSCROLL", "STR_GENERAL"));
+#else
+	_info.push_back(OptionInfo("listDragScroll", &listDragScroll, false, "STR_LISTDRAGSCROLL", "STR_GENERAL"));
+#endif
 	_info.push_back(OptionInfo("geoDragScrollInvert", &geoDragScrollInvert, false, "STR_DRAGSCROLLINVERT", "STR_GEOSCAPE")); // true drags away from the cursor, false drags towards (like a grab)
 	_info.push_back(OptionInfo("aggressiveRetaliation", &aggressiveRetaliation, false, "STR_AGGRESSIVERETALIATION", "STR_GEOSCAPE"));
 	_info.push_back(OptionInfo("customInitialBase", &customInitialBase, false, "STR_CUSTOMINITIALBASE", "STR_GEOSCAPE"));
@@ -185,8 +221,20 @@ void create()
 	_info.push_back(OptionInfo("canTransferCraftsWhileAirborne", &canTransferCraftsWhileAirborne, false, "STR_CANTRANSFERCRAFTSWHILEAIRBORNE", "STR_GEOSCAPE")); // When the craft can reach the destination base with its fuel
 	_info.push_back(OptionInfo("retainCorpses", &retainCorpses, false, "STR_RETAINCORPSES", "STR_GEOSCAPE"));
 	_info.push_back(OptionInfo("fieldPromotions", &fieldPromotions, false, "STR_FIELDPROMOTIONS", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("meetingPoint", &meetingPoint, false, "STR_MEETINGPOINT", "STR_GEOSCAPE"));
+	//_info.push_back(OptionInfo("meetingPoint", &meetingPoint, false, "STR_MEETINGPOINT", "STR_GEOSCAPE"));
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("dragSoldierReorder", &dragSoldierReorder, true, "STR_DRAGREORDER", "STR_GEOSCAPE"));
+#else
+	_info.push_back(OptionInfo("dragSoldierReorder", &dragSoldierReorder, false, "STR_DRAGREORDER", "STR_GEOSCAPE"));
+#endif
 
+#if defined(__MOBILE__) || defined (__PSEUDO_ANDROID__)
+	_info.push_back(OptionInfo("swipeToTurn", &swipeToTurn, true, "STR_SWIPE", "STR_BATTLESCAPE")); // These first two options are specific to Android;
+	_info.push_back(OptionInfo("holdToTurn", &holdToTurn, true, "STR_HOLD", "STR_BATTLESCAPE"));    // they're moved here from a separate menu.
+#else
+	_info.push_back(OptionInfo("swipeToTurn", &swipeToTurn, false));
+	_info.push_back(OptionInfo("holdToTurn", &holdToTurn, false));
+#endif
 	_info.push_back(OptionInfo("battleDragScrollInvert", &battleDragScrollInvert, false, "STR_DRAGSCROLLINVERT", "STR_BATTLESCAPE")); // true drags away from the cursor, false drags towards (like a grab)
 	_info.push_back(OptionInfo("sneakyAI", &sneakyAI, false, "STR_SNEAKYAI", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("battleUFOExtenderAccuracy", &battleUFOExtenderAccuracy, false, "STR_BATTLEUFOEXTENDERACCURACY", "STR_BATTLESCAPE"));
@@ -198,7 +246,11 @@ void create()
 	_info.push_back(OptionInfo("battleAutoEnd", &battleAutoEnd, false, "STR_BATTLEAUTOEND", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("battleSmoothCamera", &battleSmoothCamera, false, "STR_BATTLESMOOTHCAMERA", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("disableAutoEquip", &disableAutoEquip, false, "STR_DISABLEAUTOEQUIP", "STR_BATTLESCAPE"));
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("battleConfirmFireMode", &battleConfirmFireMode, true, "STR_BATTLECONFIRMFIREMODE", "STR_BATTLESCAPE"));
+#else
 	_info.push_back(OptionInfo("battleConfirmFireMode", &battleConfirmFireMode, false, "STR_BATTLECONFIRMFIREMODE", "STR_BATTLESCAPE"));
+#endif
 	_info.push_back(OptionInfo("weaponSelfDestruction", &weaponSelfDestruction, false, "STR_WEAPONSELFDESTRUCTION", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("allowPsionicCapture", &allowPsionicCapture, false, "STR_ALLOWPSIONICCAPTURE", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("allowPsiStrengthImprovement", &allowPsiStrengthImprovement, false, "STR_ALLOWPSISTRENGTHIMPROVEMENT", "STR_BATTLESCAPE"));
@@ -208,83 +260,137 @@ void create()
 	_info.push_back(OptionInfo("noAlienPanicMessages", &noAlienPanicMessages, false, "STR_NOALIENPANICMESSAGES", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("alienBleeding", &alienBleeding, false, "STR_ALIENBLEEDING", "STR_BATTLESCAPE"));
 
+	// System-specific
+	_info.push_back(OptionInfo("systemUI", (int*)&systemUI, SYSTEMUI_ALWAYS_SHOWN));
+	_info.push_back(OptionInfo("logToFile", &logToFile, false));
+	_info.push_back(OptionInfo("logToSystem", &logToSystem, true));
+	_info.push_back(OptionInfo("logTouch", &logTouch, false));
+	_info.push_back(OptionInfo("fakeEvents", &fakeEvents, true));
+	_info.push_back(OptionInfo("forceGLMode", &forceGLMode, true));
+    _info.push_back(OptionInfo("mouseMode", &mouseMode, 0));
+	_info.push_back(OptionInfo("longPressDuration", &longPressDuration, 500));
+#ifdef __MOBILE__
+	_info.push_back(OptionInfo("showCursor", &showCursor, false));
+#else
+	_info.push_back(OptionInfo("showCursor", &showCursor, true));
+#endif
+
+	// OXCE
+	_info.push_back(OptionInfo("oxceStartUpTextMode", &oxceStartUpTextMode, 0, "", "HIDDEN"));
+	_info.push_back(OptionInfo("oxceUfoLandingAlert", &oxceUfoLandingAlert, false, "STR_UFO_LANDING_ALERT", "STR_OXCE"));
+	_info.push_back(OptionInfo("oxceWoundedDefendBaseIf", &oxceWoundedDefendBaseIf, 100, "STR_WOUNDED_DEFEND_BASE_IF", "STR_OXCE"));
+	_info.push_back(OptionInfo("oxcePlayBriefingMusicDuringEquipment", &oxcePlayBriefingMusicDuringEquipment, false, "STR_PLAY_BRIEFING_MUSIC_DURING_EQUIPMENT", "STR_OXCE"));
+	_info.push_back(OptionInfo("oxceNightVisionColor", &oxceNightVisionColor, 8, "STR_NIGHT_VISION_COLOR", "STR_OXCE"));
+	_info.push_back(OptionInfo("oxceAutoSell", &oxceAutoSell, false, "STR_AUTO_SELL", "STR_OXCE"));
+
 	// controls
-	_info.push_back(OptionInfo("keyOk", &keyOk, SDLK_RETURN, "STR_OK", "STR_GENERAL"));
-	_info.push_back(OptionInfo("keyCancel", &keyCancel, SDLK_ESCAPE, "STR_CANCEL", "STR_GENERAL"));
-	_info.push_back(OptionInfo("keyScreenshot", &keyScreenshot, SDLK_F12, "STR_SCREENSHOT", "STR_GENERAL"));
-	_info.push_back(OptionInfo("keyFps", &keyFps, SDLK_F7, "STR_FPS_COUNTER", "STR_GENERAL"));
-	_info.push_back(OptionInfo("keyQuickSave", &keyQuickSave, SDLK_F5, "STR_QUICK_SAVE", "STR_GENERAL"));
-	_info.push_back(OptionInfo("keyQuickLoad", &keyQuickLoad, SDLK_F9, "STR_QUICK_LOAD", "STR_GENERAL"));
-	_info.push_back(OptionInfo("keyGeoLeft", &keyGeoLeft, SDLK_LEFT, "STR_ROTATE_LEFT", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoRight", &keyGeoRight, SDLK_RIGHT, "STR_ROTATE_RIGHT", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoUp", &keyGeoUp, SDLK_UP, "STR_ROTATE_UP", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoDown", &keyGeoDown, SDLK_DOWN, "STR_ROTATE_DOWN", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoZoomIn", &keyGeoZoomIn, SDLK_PLUS, "STR_ZOOM_IN", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoZoomOut", &keyGeoZoomOut, SDLK_MINUS, "STR_ZOOM_OUT", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoSpeed1", &keyGeoSpeed1, SDLK_1, "STR_5_SECONDS", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoSpeed2", &keyGeoSpeed2, SDLK_2, "STR_1_MINUTE", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoSpeed3", &keyGeoSpeed3, SDLK_3, "STR_5_MINUTES", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoSpeed4", &keyGeoSpeed4, SDLK_4, "STR_30_MINUTES", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoSpeed5", &keyGeoSpeed5, SDLK_5, "STR_1_HOUR", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoSpeed6", &keyGeoSpeed6, SDLK_6, "STR_1_DAY", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoIntercept", &keyGeoIntercept, SDLK_i, "STR_INTERCEPT", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoBases", &keyGeoBases, SDLK_b, "STR_BASES", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoGraphs", &keyGeoGraphs, SDLK_g, "STR_GRAPHS", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoUfopedia", &keyGeoUfopedia, SDLK_u, "STR_UFOPAEDIA_UC", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoOptions", &keyGeoOptions, SDLK_ESCAPE, "STR_OPTIONS_UC", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoFunding", &keyGeoFunding, SDLK_f, "STR_FUNDING_UC", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoToggleDetail", &keyGeoToggleDetail, SDLK_TAB, "STR_TOGGLE_COUNTRY_DETAIL", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyGeoToggleRadar", &keyGeoToggleRadar, SDLK_r, "STR_TOGGLE_RADAR_RANGES", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect1", &keyBaseSelect1, SDLK_1, "STR_SELECT_BASE_1", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect2", &keyBaseSelect2, SDLK_2, "STR_SELECT_BASE_2", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect3", &keyBaseSelect3, SDLK_3, "STR_SELECT_BASE_3", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect4", &keyBaseSelect4, SDLK_4, "STR_SELECT_BASE_4", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect5", &keyBaseSelect5, SDLK_5, "STR_SELECT_BASE_5", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect6", &keyBaseSelect6, SDLK_6, "STR_SELECT_BASE_6", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect7", &keyBaseSelect7, SDLK_7, "STR_SELECT_BASE_7", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBaseSelect8", &keyBaseSelect8, SDLK_8, "STR_SELECT_BASE_8", "STR_GEOSCAPE"));
-	_info.push_back(OptionInfo("keyBattleLeft", &keyBattleLeft, SDLK_LEFT, "STR_SCROLL_LEFT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleRight", &keyBattleRight, SDLK_RIGHT, "STR_SCROLL_RIGHT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleUp", &keyBattleUp, SDLK_UP, "STR_SCROLL_UP", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleDown", &keyBattleDown, SDLK_DOWN, "STR_SCROLL_DOWN", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleLevelUp", &keyBattleLevelUp, SDLK_PAGEUP, "STR_VIEW_LEVEL_ABOVE", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleLevelDown", &keyBattleLevelDown, SDLK_PAGEDOWN, "STR_VIEW_LEVEL_BELOW", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterUnit", &keyBattleCenterUnit, SDLK_HOME, "STR_CENTER_SELECTED_UNIT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattlePrevUnit", &keyBattlePrevUnit, SDLK_LSHIFT, "STR_PREVIOUS_UNIT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleNextUnit", &keyBattleNextUnit, SDLK_TAB, "STR_NEXT_UNIT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleDeselectUnit", &keyBattleDeselectUnit, SDLK_BACKSLASH, "STR_DESELECT_UNIT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleUseLeftHand", &keyBattleUseLeftHand, SDLK_q, "STR_USE_LEFT_HAND", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleUseRightHand", &keyBattleUseRightHand, SDLK_e, "STR_USE_RIGHT_HAND", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleInventory", &keyBattleInventory, SDLK_i, "STR_INVENTORY", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleMap", &keyBattleMap, SDLK_m, "STR_MINIMAP", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleOptions", &keyBattleOptions, SDLK_ESCAPE, "STR_OPTIONS", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleEndTurn", &keyBattleEndTurn, SDLK_BACKSPACE, "STR_END_TURN", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleAbort", &keyBattleAbort, SDLK_a, "STR_ABORT_MISSION", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleStats", &keyBattleStats, SDLK_s, "STR_UNIT_STATS", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleKneel", &keyBattleKneel, SDLK_k, "STR_KNEEL", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleReload", &keyBattleReload, SDLK_r, "STR_RELOAD", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattlePersonalLighting", &keyBattlePersonalLighting, SDLK_l, "STR_TOGGLE_PERSONAL_LIGHTING", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleReserveNone", &keyBattleReserveNone, SDLK_F1, "STR_DONT_RESERVE_TIME_UNITS", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleReserveSnap", &keyBattleReserveSnap, SDLK_F2, "STR_RESERVE_TIME_UNITS_FOR_SNAP_SHOT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleReserveAimed", &keyBattleReserveAimed, SDLK_F3, "STR_RESERVE_TIME_UNITS_FOR_AIMED_SHOT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleReserveAuto", &keyBattleReserveAuto, SDLK_F4, "STR_RESERVE_TIME_UNITS_FOR_AUTO_SHOT", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleReserveKneel", &keyBattleReserveKneel, SDLK_j, "STR_RESERVE_TIME_UNITS_FOR_KNEEL", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleZeroTUs", &keyBattleZeroTUs, SDLK_DELETE, "STR_EXPEND_ALL_TIME_UNITS", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy1", &keyBattleCenterEnemy1, SDLK_1, "STR_CENTER_ON_ENEMY_1", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy2", &keyBattleCenterEnemy2, SDLK_2, "STR_CENTER_ON_ENEMY_2", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy3", &keyBattleCenterEnemy3, SDLK_3, "STR_CENTER_ON_ENEMY_3", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy4", &keyBattleCenterEnemy4, SDLK_4, "STR_CENTER_ON_ENEMY_4", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy5", &keyBattleCenterEnemy5, SDLK_5, "STR_CENTER_ON_ENEMY_5", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy6", &keyBattleCenterEnemy6, SDLK_6, "STR_CENTER_ON_ENEMY_6", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy7", &keyBattleCenterEnemy7, SDLK_7, "STR_CENTER_ON_ENEMY_7", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy8", &keyBattleCenterEnemy8, SDLK_8, "STR_CENTER_ON_ENEMY_8", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy9", &keyBattleCenterEnemy9, SDLK_9, "STR_CENTER_ON_ENEMY_9", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleCenterEnemy10", &keyBattleCenterEnemy10, SDLK_0, "STR_CENTER_ON_ENEMY_10", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyBattleVoxelView", &keyBattleVoxelView, SDLK_F10, "STR_SAVE_VOXEL_VIEW", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyInvCreateTemplate", &keyInvCreateTemplate, SDLK_c, "STR_CREATE_INVENTORY_TEMPLATE", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyInvApplyTemplate", &keyInvApplyTemplate, SDLK_v, "STR_APPLY_INVENTORY_TEMPLATE", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyInvClear", &keyInvClear, SDLK_x, "STR_CLEAR_INVENTORY", "STR_BATTLESCAPE"));
-	_info.push_back(OptionInfo("keyInvAutoEquip", &keyInvAutoEquip, SDLK_z, "STR_AUTO_EQUIP", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyOk", &keyOk, SDLK_RETURN, "STR_OK", "STR_GENERAL"));
+	_info.push_back(KeyOptionInfo("keyCancel", &keyCancel, SDLK_ESCAPE, "STR_CANCEL", "STR_GENERAL"));
+	_info.push_back(KeyOptionInfo("keyScreenshot", &keyScreenshot, SDLK_F12, "STR_SCREENSHOT", "STR_GENERAL"));
+	_info.push_back(KeyOptionInfo("keyFps", &keyFps, SDLK_F7, "STR_FPS_COUNTER", "STR_GENERAL"));
+	_info.push_back(KeyOptionInfo("keyQuickSave", &keyQuickSave, SDLK_F5, "STR_QUICK_SAVE", "STR_GENERAL"));
+	_info.push_back(KeyOptionInfo("keyQuickLoad", &keyQuickLoad, SDLK_F9, "STR_QUICK_LOAD", "STR_GENERAL"));
+	_info.push_back(KeyOptionInfo("keyGeoLeft", &keyGeoLeft, SDLK_LEFT, "STR_ROTATE_LEFT", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoRight", &keyGeoRight, SDLK_RIGHT, "STR_ROTATE_RIGHT", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoUp", &keyGeoUp, SDLK_UP, "STR_ROTATE_UP", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoDown", &keyGeoDown, SDLK_DOWN, "STR_ROTATE_DOWN", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoZoomIn", &keyGeoZoomIn, SDLK_PLUS, "STR_ZOOM_IN", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoZoomOut", &keyGeoZoomOut, SDLK_MINUS, "STR_ZOOM_OUT", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoSpeed1", &keyGeoSpeed1, SDLK_1, "STR_5_SECONDS", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoSpeed2", &keyGeoSpeed2, SDLK_2, "STR_1_MINUTE", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoSpeed3", &keyGeoSpeed3, SDLK_3, "STR_5_MINUTES", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoSpeed4", &keyGeoSpeed4, SDLK_4, "STR_30_MINUTES", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoSpeed5", &keyGeoSpeed5, SDLK_5, "STR_1_HOUR", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoSpeed6", &keyGeoSpeed6, SDLK_6, "STR_1_DAY", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoIntercept", &keyGeoIntercept, SDLK_i, "STR_INTERCEPT", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoBases", &keyGeoBases, SDLK_b, "STR_BASES", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoGraphs", &keyGeoGraphs, SDLK_g, "STR_GRAPHS", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoUfopedia", &keyGeoUfopedia, SDLK_u, "STR_UFOPAEDIA_UC", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoOptions", &keyGeoOptions, SDLK_ESCAPE, "STR_OPTIONS_UC", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoFunding", &keyGeoFunding, SDLK_f, "STR_FUNDING_UC", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoToggleDetail", &keyGeoToggleDetail, SDLK_TAB, "STR_TOGGLE_COUNTRY_DETAIL", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyGeoToggleRadar", &keyGeoToggleRadar, SDLK_r, "STR_TOGGLE_RADAR_RANGES", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect1", &keyBaseSelect1, SDLK_1, "STR_SELECT_BASE_1", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect2", &keyBaseSelect2, SDLK_2, "STR_SELECT_BASE_2", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect3", &keyBaseSelect3, SDLK_3, "STR_SELECT_BASE_3", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect4", &keyBaseSelect4, SDLK_4, "STR_SELECT_BASE_4", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect5", &keyBaseSelect5, SDLK_5, "STR_SELECT_BASE_5", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect6", &keyBaseSelect6, SDLK_6, "STR_SELECT_BASE_6", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect7", &keyBaseSelect7, SDLK_7, "STR_SELECT_BASE_7", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBaseSelect8", &keyBaseSelect8, SDLK_8, "STR_SELECT_BASE_8", "STR_GEOSCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleLeft", &keyBattleLeft, SDLK_LEFT, "STR_SCROLL_LEFT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleRight", &keyBattleRight, SDLK_RIGHT, "STR_SCROLL_RIGHT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleUp", &keyBattleUp, SDLK_UP, "STR_SCROLL_UP", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleDown", &keyBattleDown, SDLK_DOWN, "STR_SCROLL_DOWN", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleLevelUp", &keyBattleLevelUp, SDLK_PAGEUP, "STR_VIEW_LEVEL_ABOVE", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleLevelDown", &keyBattleLevelDown, SDLK_PAGEDOWN, "STR_VIEW_LEVEL_BELOW", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterUnit", &keyBattleCenterUnit, SDLK_HOME, "STR_CENTER_SELECTED_UNIT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattlePrevUnit", &keyBattlePrevUnit, SDLK_UNKNOWN, "STR_PREVIOUS_UNIT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleNextUnit", &keyBattleNextUnit, SDLK_TAB, "STR_NEXT_UNIT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleDeselectUnit", &keyBattleDeselectUnit, SDLK_BACKSLASH, "STR_DESELECT_UNIT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleUseLeftHand", &keyBattleUseLeftHand, SDLK_q, "STR_USE_LEFT_HAND", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleUseRightHand", &keyBattleUseRightHand, SDLK_e, "STR_USE_RIGHT_HAND", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleInventory", &keyBattleInventory, SDLK_i, "STR_INVENTORY", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleMap", &keyBattleMap, SDLK_m, "STR_MINIMAP", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleOptions", &keyBattleOptions, SDLK_ESCAPE, "STR_OPTIONS", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleEndTurn", &keyBattleEndTurn, SDLK_BACKSPACE, "STR_END_TURN", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleAbort", &keyBattleAbort, SDLK_a, "STR_ABORT_MISSION", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleStats", &keyBattleStats, SDLK_s, "STR_UNIT_STATS", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleKneel", &keyBattleKneel, SDLK_k, "STR_KNEEL", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleReload", &keyBattleReload, SDLK_r, "STR_RELOAD", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattlePersonalLighting", &keyBattlePersonalLighting, SDLK_l, "STR_TOGGLE_PERSONAL_LIGHTING", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleReserveNone", &keyBattleReserveNone, SDLK_F1, "STR_DONT_RESERVE_TIME_UNITS", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleReserveSnap", &keyBattleReserveSnap, SDLK_F2, "STR_RESERVE_TIME_UNITS_FOR_SNAP_SHOT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleReserveAimed", &keyBattleReserveAimed, SDLK_F3, "STR_RESERVE_TIME_UNITS_FOR_AIMED_SHOT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleReserveAuto", &keyBattleReserveAuto, SDLK_F4, "STR_RESERVE_TIME_UNITS_FOR_AUTO_SHOT", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleReserveKneel", &keyBattleReserveKneel, SDLK_j, "STR_RESERVE_TIME_UNITS_FOR_KNEEL", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleZeroTUs", &keyBattleZeroTUs, SDLK_DELETE, "STR_EXPEND_ALL_TIME_UNITS", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy1", &keyBattleCenterEnemy1, SDLK_1, "STR_CENTER_ON_ENEMY_1", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy2", &keyBattleCenterEnemy2, SDLK_2, "STR_CENTER_ON_ENEMY_2", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy3", &keyBattleCenterEnemy3, SDLK_3, "STR_CENTER_ON_ENEMY_3", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy4", &keyBattleCenterEnemy4, SDLK_4, "STR_CENTER_ON_ENEMY_4", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy5", &keyBattleCenterEnemy5, SDLK_5, "STR_CENTER_ON_ENEMY_5", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy6", &keyBattleCenterEnemy6, SDLK_6, "STR_CENTER_ON_ENEMY_6", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy7", &keyBattleCenterEnemy7, SDLK_7, "STR_CENTER_ON_ENEMY_7", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy8", &keyBattleCenterEnemy8, SDLK_8, "STR_CENTER_ON_ENEMY_8", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy9", &keyBattleCenterEnemy9, SDLK_9, "STR_CENTER_ON_ENEMY_9", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleCenterEnemy10", &keyBattleCenterEnemy10, SDLK_0, "STR_CENTER_ON_ENEMY_10", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyBattleVoxelView", &keyBattleVoxelView, SDLK_F10, "STR_SAVE_VOXEL_VIEW", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyInvCreateTemplate", &keyInvCreateTemplate, SDLK_c, "STR_CREATE_INVENTORY_TEMPLATE", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyInvApplyTemplate", &keyInvApplyTemplate, SDLK_v, "STR_APPLY_INVENTORY_TEMPLATE", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyInvClear", &keyInvClear, SDLK_x, "STR_CLEAR_INVENTORY", "STR_BATTLESCAPE"));
+	_info.push_back(KeyOptionInfo("keyInvAutoEquip", &keyInvAutoEquip, SDLK_z, "STR_AUTO_EQUIP", "STR_BATTLESCAPE"));
+
+	// OXCE
+	_info.push_back(KeyOptionInfo("keyGeoUfoTracker", &keyGeoUfoTracker, SDLK_t, "STR_UFO_TRACKER", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyGeoTechTreeViewer", &keyGeoTechTreeViewer, SDLK_q, "STR_TECH_TREE_VIEWER", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyGeoGlobalResearch", &keyGeoGlobalResearch, SDLK_c, "STR_RESEARCH_OVERVIEW", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyGraphsZoomIn", &keyGraphsZoomIn, SDLK_KP_PLUS, "STR_GRAPHS_ZOOM_IN", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyGraphsZoomOut", &keyGraphsZoomOut, SDLK_KP_MINUS, "STR_GRAPHS_ZOOM_OUT", "STR_OXCE"));
+
+	_info.push_back(KeyOptionInfo("keyToggleQuickSearch", &keyToggleQuickSearch, SDLK_q, "STR_TOGGLE_QUICK_SEARCH", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyCraftLoadoutSave", &keyCraftLoadoutSave, SDLK_F5, "STR_SAVE_CRAFT_LOADOUT_TEMPLATE", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyCraftLoadoutLoad", &keyCraftLoadoutLoad, SDLK_F9, "STR_LOAD_CRAFT_LOADOUT_TEMPLATE", "STR_OXCE"));
+
+	_info.push_back(KeyOptionInfo("keyMarkAllAsSeen", &keyMarkAllAsSeen, SDLK_x, "STR_MARK_ALL_AS_SEEN", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keySelectAll", &keySelectAll, SDLK_x, "STR_SELECT_ALL", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyDeselectAll", &keyDeselectAll, SDLK_x, "STR_DESELECT_ALL", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyResetAll", &keyResetAll, SDLK_x, "STR_RESET_ALL", "STR_OXCE"));
+
+	_info.push_back(KeyOptionInfo("keyInventoryArmor", &keyInventoryArmor, SDLK_a, "STR_INVENTORY_ARMOR", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyInventoryAvatar", &keyInventoryAvatar, SDLK_m, "STR_INVENTORY_AVATAR", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyInventorySave", &keyInventorySave, SDLK_F5, "STR_SAVE_EQUIPMENT_TEMPLATE", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyInventoryLoad", &keyInventoryLoad, SDLK_F9, "STR_LOAD_EQUIPMENT_TEMPLATE", "STR_OXCE"));
+
+	_info.push_back(KeyOptionInfo("keyBattleUseSpecial", &keyBattleUseSpecial, SDLK_w, "STR_USE_SPECIAL_ITEM", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyBattleActionItem1", &keyBattleActionItem1, SDLK_1, "STR_ACTION_ITEM_1", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyBattleActionItem2", &keyBattleActionItem2, SDLK_2, "STR_ACTION_ITEM_2", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyBattleActionItem3", &keyBattleActionItem3, SDLK_3, "STR_ACTION_ITEM_3", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyBattleActionItem4", &keyBattleActionItem4, SDLK_4, "STR_ACTION_ITEM_4", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyBattleActionItem5", &keyBattleActionItem5, SDLK_5, "STR_ACTION_ITEM_5", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyNightVisionToggle", &keyNightVisionToggle, SDLK_SCROLLLOCK, "STR_TOGGLE_NIGHT_VISION", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keyNightVisionHold", &keyNightVisionHold, SDLK_SPACE, "STR_HOLD_NIGHT_VISION", "STR_OXCE"));
+	_info.push_back(KeyOptionInfo("keySelectMusicTrack", &keySelectMusicTrack, SDLK_END, "STR_SELECT_MUSIC_TRACK", "STR_OXCE"));
 
 #ifdef __MORPHOS__
 	_info.push_back(OptionInfo("FPS", &FPS, 15, "STR_FPS_LIMIT", "STR_GENERAL"));
@@ -301,11 +407,15 @@ void create()
 // that the *correct* files are there complex.
 static bool _gameIsInstalled(const std::string &gameName)
 {
-	// look for game data in either the data or user directories
+	// look for game data in either the data or user directorie
 	std::string dataGameFolder = CrossPlatform::searchDataFolder(gameName);
+	std::string dataGameZipFile = CrossPlatform::searchDataFile(gameName + ".zip");
 	std::string userGameFolder = _userFolder + gameName;
+	std::string userGameZipFile = _userFolder + gameName + ".zip";
 	return (CrossPlatform::folderExists(dataGameFolder)	&& CrossPlatform::getFolderContents(dataGameFolder).size() > 8)
-	    || (CrossPlatform::folderExists(userGameFolder)	&& CrossPlatform::getFolderContents(userGameFolder).size() > 8);
+	    || (CrossPlatform::folderExists(userGameFolder)	&& CrossPlatform::getFolderContents(userGameFolder).size() > 8)
+		||  CrossPlatform::fileExists( dataGameZipFile )
+		||  CrossPlatform::fileExists( userGameZipFile );
 }
 
 static bool _ufoIsInstalled()
@@ -356,12 +466,14 @@ void resetDefault()
  * @param argc Number of arguments.
  * @param argv Array of argument strings.
  */
-void loadArgs(int argc, char *argv[])
+static void loadArgs()
 {
-	for (int i = 1; i < argc; ++i)
+	Options::systemLocale = "";
+	auto argv = CrossPlatform::getArgs();
+	for (size_t i = 1; i < argv.size(); ++i)
 	{
-		std::string arg = argv[i];
-		if ((arg[0] == '-' || arg[0] == '/') && arg.length() > 1)
+		auto arg = argv[i];
+		if (arg.size() > 1 && arg[0] == '-')
 		{
 			std::string argname;
 			if (arg[1] == '-' && arg.length() > 2)
@@ -369,21 +481,40 @@ void loadArgs(int argc, char *argv[])
 			else
 				argname = arg.substr(1, arg.length()-1);
 			std::transform(argname.begin(), argname.end(), argname.begin(), ::tolower);
-			if (argc > i + 1)
+			if (argname == "cont" || argname == "continue")
+			{
+				_loadLastSave = true;
+				continue;
+			}
+			if (argv.size() > i + 1)
 			{
 				++i; // we'll be consuming the next argument too
-
+				Log(LOG_DEBUG) << "loadArgs(): "<< argname <<" -> " << argv[i];
 				if (argname == "data")
 				{
-					_dataFolder = CrossPlatform::endPath(argv[i]);
+					_dataFolder = argv[i];
+					if (_dataFolder.size() > 1 && _dataFolder[_dataFolder.size() - 1] != '/') {
+						_dataFolder.push_back('/');
+					}
 				}
 				else if (argname == "user")
 				{
-					_userFolder = CrossPlatform::endPath(argv[i]);
+					_userFolder = argv[i];
+					if (_userFolder.size() > 1 && _userFolder[_userFolder.size() - 1] != '/') {
+						_userFolder.push_back('/');
+					}
 				}
 				else if (argname == "cfg" || argname == "config")
 				{
-					_configFolder = CrossPlatform::endPath(argv[i]);
+					_configFolder = argv[i];
+					if (_configFolder.size() > 1 && _configFolder[_configFolder.size() - 1] != '/') {
+						_configFolder.push_back('/');
+					}
+				}
+				else if (argname == "locale")
+				{
+					systemLocale += argv[i];
+					Log(LOG_INFO) << "Current locale is " << systemLocale;
 				}
 				else
 				{
@@ -404,7 +535,7 @@ void loadArgs(int argc, char *argv[])
  * @param argc Number of arguments.
  * @param argv Array of argument strings.
  */
-bool showHelp(int argc, char *argv[])
+static bool showHelp()
 {
 	std::ostringstream help;
 	help << "OpenXcom v" << OPENXCOM_VERSION_SHORT << std::endl;
@@ -420,9 +551,8 @@ bool showHelp(int argc, char *argv[])
 	help << "-help" << std::endl;
 	help << "-?" << std::endl;
 	help << "        show command-line help" << std::endl;
-	for (int i = 1; i < argc; ++i)
+	for (auto arg: CrossPlatform::getArgs())
 	{
-		std::string arg = argv[i];
 		if ((arg[0] == '-' || arg[0] == '/') && arg.length() > 1)
 		{
 			std::string argname;
@@ -441,105 +571,70 @@ bool showHelp(int argc, char *argv[])
 	return false;
 }
 
-const std::map<std::string, ModInfo> &getModInfos() { return _modInfos; }
+const std::unordered_map<std::string, ModInfo> &getModInfos() { return _modInfos; }
 
-static void _scanMods(const std::string &modsDir)
+/**
+ * Splits the game's User folder by master mod,
+ * creating a subfolder for each one.
+ * Moving the saves from userFolder into subfolders
+ * has been removed.
+ */
+static void userSplitMasters()
 {
-	if (!CrossPlatform::folderExists(modsDir))
-	{
-		Log(LOG_VERBOSE) << "skipping non-existent mod directory: '" << modsDir << "'";
-		return;
-	}
-
-	std::vector<std::string> contents = CrossPlatform::getFolderContents(modsDir);
-	for (std::vector<std::string>::iterator i = contents.begin(); i != contents.end(); ++i)
-	{
-		std::string modPath = modsDir + CrossPlatform::PATH_SEPARATOR + *i;
-		if (!CrossPlatform::folderExists(modPath))
-		{
-			// skip non-directories (e.g. README.txt)
-			continue;
+	for (auto i : _modInfos) {
+		if (i.second.isMaster()) {
+			std::string masterFolder = _userFolder + i.first;
+			if (!CrossPlatform::folderExists(masterFolder)) {
+				CrossPlatform::createFolder(masterFolder);
+			}
 		}
-
-		Log(LOG_VERBOSE) << "- " << modPath;
-		ModInfo modInfo(modPath);
-
-		std::string metadataPath = modPath + "/metadata.yml";
-		if (!CrossPlatform::fileExists(metadataPath))
-		{
-			Log(LOG_VERBOSE) << metadataPath << " not found; using default values for mod: " << *i;
-		}
-		else
-		{
-			modInfo.load(metadataPath);
-		}
-
-		Log(LOG_VERBOSE) << "  id: " << modInfo.getId();
-		Log(LOG_VERBOSE) << "  name: " << modInfo.getName();
-		Log(LOG_VERBOSE) << "  version: " << modInfo.getVersion();
-		Log(LOG_VERBOSE) << "  description: " << modInfo.getDescription();
-		Log(LOG_VERBOSE) << "  author: " << modInfo.getAuthor();
-		Log(LOG_VERBOSE) << "  master: " << modInfo.getMaster();
-		Log(LOG_VERBOSE) << "  isMaster: " << modInfo.isMaster();
-		Log(LOG_VERBOSE) << "  loadResources:";
-		std::vector<std::string> externals = modInfo.getExternalResourceDirs();
-		for (std::vector<std::string>::iterator j = externals.begin(); j != externals.end(); ++j)
-		{
-			Log(LOG_VERBOSE) << "    " << *j;
-		}
-
-		if (("xcom1" == modInfo.getId() && !_ufoIsInstalled())
-		 || ("xcom2" == modInfo.getId() && !_tftdIsInstalled()))
-		{
-			Log(LOG_VERBOSE) << "skipping " << modInfo.getId() << " since related game data isn't installed";
-			continue;
-		}
-
-		_modInfos.insert(std::pair<std::string, ModInfo>(modInfo.getId(), modInfo));
 	}
 }
 
 /**
- * Handles the initialization of setting up default options
+ * Handles the initialization of setting up default option
  * and finding and loading any existing ones.
  * @param argc Number of arguments.
  * @param argv Array of argument strings.
  * @return Do we start the game?
  */
-bool init(int argc, char *argv[])
+bool init()
 {
-	if (showHelp(argc, argv))
+	if (showHelp())
 		return false;
 	create();
 	resetDefault();
-	loadArgs(argc, argv);
+	loadArgs();
 	setFolders();
 	_setDefaultMods();
 	updateOptions();
 
-	std::string s = getUserFolder();
-	s += "openxcom.log";
-	Logger::logFile() = s;
-	FILE *file = fopen(Logger::logFile().c_str(), "w");
-	if (file)
-	{
-		fflush(file);
-		fclose(file);
-	}
-	else
-	{
-		Log(LOG_WARNING) << "Couldn't create log file, switching to stderr";
-	}
+	// set up the logging reportingLevel
+#ifdef _DEBUG
+	Logger::reportingLevel() = LOG_DEBUG;
+#else
+	Logger::reportingLevel() = LOG_INFO;
+#endif
+
+	if (Options::verboseLogging)
+		Logger::reportingLevel() = LOG_VERBOSE;
+
+	// this enables writes to the log file and filters already emitted messages
+	CrossPlatform::setLogFileName(getUserFolder() + "openxcom.log");
 
 	Log(LOG_INFO) << "OpenXcom Version: " << OPENXCOM_VERSION_SHORT << OPENXCOM_VERSION_GIT;
-#ifdef _WIN32
-	Log(LOG_INFO) << "Platform: Windows";
+#ifdef _WIN64
+	Log(LOG_INFO) << "Platform: Windows 64 bit";
+#elif _WIN32
+	Log(LOG_INFO) << "Platform: Windows 32 bit";
 #elif __APPLE__
 	Log(LOG_INFO) << "Platform: OSX";
 #elif  __ANDROID_API__
-	Log(LOG_INFO) << "Platform: Android";
+	Log(LOG_INFO) << "Platform: Android " << __ANDROID_API__ ;
 #elif __vita__
 	Log(LOG_INFO) << "Platform: PSP2";
+#elif __linux__
+	Log(LOG_INFO) << "Platform: Linux";
 #else
 	Log(LOG_INFO) << "Platform: Unix-like";
 #endif
@@ -554,28 +649,32 @@ bool init(int argc, char *argv[])
 	Log(LOG_INFO) << "Config folder is: " << _configFolder;
 	Log(LOG_INFO) << "Options loaded successfully.";
 
+	FileMap::clear();
 	return true;
 }
 
+// called from the dos screen state (StartState)
 void updateMods()
 {
-	// pick up stuff in common before-hand
-	FileMap::load("common", CrossPlatform::searchDataFolder("common"), true);
+	FileMap::clear();
+	Log(LOG_INFO) << "Scanning standard mods in '" << getDataFolder() << "'...";
+	FileMap::scanModDir(getDataFolder(), "standard");
+	Log(LOG_INFO) << "Scanning user mods in '" << getUserFolder() << "'...";
+	FileMap::scanModDir(getUserFolder(), "mods");
 
-	std::string modPath = CrossPlatform::searchDataFolder("standard");
-	Log(LOG_INFO) << "Scanning standard mods in '" << modPath << "'...";
-	_scanMods(modPath);
-	modPath = _userFolder + "mods";
-	Log(LOG_INFO) << "Scanning user mods in '" << modPath << "'...";
-	_scanMods(modPath);
+	// Check mods' dependencies on other mods and extResources (UFO, TFTD, etc),
+	// also breaks circular dependency loops.
+	FileMap::checkModsDependencies();
+
+	// Now we can get the list of ModInfos from the FileMap -
+	// those are the mods that can possibly be loaded.
+	_modInfos = FileMap::getModInfos();
 
 	// remove mods from list that no longer exist
-	for (std::vector< std::pair<std::string, bool> >::iterator i = mods.begin(); i != mods.end(); )
+	for (auto i = mods.begin(); i != mods.end();)
 	{
-		std::map<std::string, ModInfo>::const_iterator modIt = _modInfos.find(i->first);
-		if (_modInfos.end() == modIt
-			|| (i->first == "xcom1" && !_ufoIsInstalled())
-			|| (i->first == "xcom2" && !_tftdIsInstalled()))
+		auto modIt = _modInfos.find(i->first);
+		if (_modInfos.end() == modIt)
 		{
 			Log(LOG_VERBOSE) << "removing references to missing mod: " << i->first;
 			i = mods.erase(i);
@@ -583,12 +682,26 @@ void updateMods()
 		}
 		++i;
 	}
-
+	// sort mods if that's the first time we see any (one or two are added in _setDefaultMods())
+	if (mods.size() <= 2) {
+		std::unordered_set<std::string> seen_modrefs;
+		for (const auto& seen_modref: mods) {
+			seen_modrefs.insert(seen_modref.first);
+		}
+		for (const auto& i: _modInfos) {
+			if (seen_modrefs.find(i.first) == seen_modrefs.end()) {
+				mods.push_back(std::make_pair(i.first, false));
+			}
+		}
+		std::sort(mods.begin(), mods.end(),
+			[](const std::pair<std::string, bool>& a, const std::pair<std::string, bool> &b)
+				{ return Unicode::naturalCompare(a.first, b.first); });
+	}
 	// add in any new mods picked up from the scan and ensure there is but a single
 	// master active
 	std::string activeMaster;
 	std::string inactiveMaster;
-	for (std::map<std::string, ModInfo>::const_iterator i = _modInfos.begin(); i != _modInfos.end(); ++i)
+	for (auto i = _modInfos.cbegin(); i != _modInfos.cend(); ++i)
 	{
 		bool found = false;
 		for (std::vector< std::pair<std::string, bool> >::iterator j = mods.begin(); j != mods.end(); ++j)
@@ -602,7 +715,7 @@ void updateMods()
 					{
 						if (!activeMaster.empty())
 						{
-							Log(LOG_WARNING) << "too many active masters detected; turning off " << j->first;
+							Log(LOG_WARNING) << "Too many active masters detected; turning off " << j->first;
 							j->second = false;
 						}
 						else
@@ -668,7 +781,7 @@ void updateMods()
 	}
 
 	updateReservedSpace();
-	mapResources();
+	FileMap::setup(getActiveMods());
 	userSplitMasters();
 }
 
@@ -681,46 +794,14 @@ std::string getActiveMaster()
 	return _masterMod;
 }
 
-static void _loadMod(const ModInfo &modInfo, std::set<std::string> circDepCheck)
+bool getLoadLastSave()
 {
-	if (circDepCheck.end() != circDepCheck.find(modInfo.getId()))
-	{
-		Log(LOG_WARNING) << "circular dependency found in master chain: " << modInfo.getId();
-		return;
-	}
+	return _loadLastSave && !_loadLastSaveExpended;
+}
 
-	FileMap::load(modInfo.getId(), modInfo.getPath(), false);
-	for (std::vector<std::string>::const_iterator i = modInfo.getExternalResourceDirs().begin(); i != modInfo.getExternalResourceDirs().end(); ++i)
-	{
-		// use external resource folders from the user dir if they exist
-		// and if not, fall back to searching the data dirs
-		std::string extResourceFolder = _userFolder + *i;
-		if (!CrossPlatform::folderExists(extResourceFolder))
-		{
-			extResourceFolder = CrossPlatform::searchDataFolder(*i);
-		}
-
-		// always ignore ruleset files in external resource dirs
-		FileMap::load(modInfo.getId(), extResourceFolder, true);
-	}
-
-	// if this is a master but it has a master of its own, allow it to
-	// chainload the "super" master, including its rulesets
-	if (modInfo.isMaster() && !modInfo.getMaster().empty())
-	{
-		// add self to circDepCheck so we can avoid circular dependencies
-		circDepCheck.insert(modInfo.getId());
-		std::map<std::string, ModInfo>::const_iterator it = _modInfos.find(modInfo.getMaster());
-		if (it != _modInfos.end())
-		{
-			const ModInfo &masterInfo = it->second;
-			_loadMod(masterInfo, circDepCheck);
-		}
-		else
-		{
-			throw Exception(modInfo.getId() + " mod requires " + modInfo.getMaster() + " master");
-		}
-	}
+void expendLoadLastSave()
+{
+	_loadLastSaveExpended = true;
 }
 
 void updateReservedSpace()
@@ -730,7 +811,7 @@ void updateReservedSpace()
 	Log(LOG_VERBOSE) << "_masterMod = " << _masterMod;
 
 	int maxSize = 1;
-	for (std::vector< std::pair<std::string, bool> >::reverse_iterator i = mods.rbegin(); i != mods.rend(); ++i)
+	for (auto i = mods.rbegin(); i != mods.rend(); ++i)
 	{
 		if (!i->second)
 		{
@@ -756,7 +837,7 @@ void updateReservedSpace()
 		// Small hack: update ALL masters, not only active master!
 		// this is because, there can be a hierarchy of multiple masters (e.g. xcom1 master > fluffyUnicorns master > some fluffyUnicorns mod)
 		// and the one that needs to be updated is actually the "root", i.e. xcom1 master
-		for (std::map<std::string, ModInfo>::iterator i = _modInfos.begin(); i != _modInfos.end(); ++i)
+		for (auto i = _modInfos.begin(); i != _modInfos.end(); ++i)
 		{
 			if (i->second.isMaster())
 			{
@@ -774,36 +855,8 @@ void updateReservedSpace()
 	}
 }
 
-void mapResources()
-{
-	Log(LOG_INFO) << "Mapping resource files...";
-	FileMap::clear();
-
-	for (std::vector< std::pair<std::string, bool> >::reverse_iterator i = mods.rbegin(); i != mods.rend(); ++i)
-	{
-		if (!i->second)
-		{
-			Log(LOG_VERBOSE) << "skipping inactive mod: " << i->first;
-			continue;
-		}
-
-		const ModInfo &modInfo = _modInfos.find(i->first)->second;
-		if (!modInfo.canActivate(_masterMod))
-		{
-			Log(LOG_VERBOSE) << "skipping mod for non-current master: " << i->first << "(" << modInfo.getMaster() << " != " << _masterMod << ")";
-			continue;
-		}
-
-		std::set<std::string> circDepCheck;
-		_loadMod(modInfo, circDepCheck);
-	}
-	// TODO: Figure out why we still need to check common here
-	FileMap::load("common", CrossPlatform::searchDataFolder("common"), true);
-	Log(LOG_INFO) << "Resources files mapped successfully.";
-}
-
 /**
- * Sets up the game's Data folder where the data files
+ * Sets up the game's Data folder where the data file
  * are loaded from and the User folder and Config
  * folder where settings and saves are stored in.
  */
@@ -813,6 +866,7 @@ void setFolders()
 	if (!_dataFolder.empty())
 	{
 		_dataList.insert(_dataList.begin(), _dataFolder);
+		Log(LOG_DEBUG) << "setFolders(): inserting " << _dataFolder;
 	}
 	if (_userFolder.empty())
 	{
@@ -833,7 +887,7 @@ void setFolders()
 			}
 		}
 
-		// Set up folders
+		// Set up folder
 		if (_userFolder.empty())
 		{
 			for (std::vector<std::string>::iterator i = user.begin(); i != user.end(); ++i)
@@ -859,64 +913,12 @@ void setFolders()
 }
 
 /**
- * Splits the game's User folder by master mod,
- * creating a subfolder for each one and moving
- * the apppropriate user data among them.
- */
-void userSplitMasters()
-{
-	// get list of master mods
-	std::vector<std::string> masters;
-	for (std::map<std::string, ModInfo>::const_iterator i = _modInfos.begin(); i != _modInfos.end(); ++i)
-	{
-		if (i->second.isMaster())
-		{
-			masters.push_back(i->first);
-		}
-	}
-
-	// create master subfolders if they don't already exist
-	std::vector<std::string> saves;
-	for (std::vector<std::string>::const_iterator i = masters.begin(); i != masters.end(); ++i)
-	{
-		std::string masterFolder = _userFolder + (*i);
-		if (!CrossPlatform::folderExists(masterFolder))
-		{
-			CrossPlatform::createFolder(masterFolder);
-			// move any old saves to the appropriate folders
-			if (saves.empty())
-			{
-				saves = CrossPlatform::getFolderContents(_userFolder, "sav");
-				std::vector<std::string> autosaves = CrossPlatform::getFolderContents(_userFolder, "asav");
-				saves.insert(saves.end(), autosaves.begin(), autosaves.end());
-			}
-			for (std::vector<std::string>::iterator j = saves.begin(); j != saves.end();)
-			{
-				std::string srcFile = _userFolder + (*j);
-				YAML::Node doc = YAML::LoadFile(srcFile);
-				std::vector<std::string> srcMods = doc["mods"].as<std::vector< std::string> >(std::vector<std::string>());
-				if (std::find(srcMods.begin(), srcMods.end(), (*i)) != srcMods.end())
-				{
-					std::string dstFile = masterFolder + CrossPlatform::PATH_SEPARATOR + (*j);
-					CrossPlatform::moveFile(srcFile, dstFile);
-					j = saves.erase(j);
-				}
-				else
-				{
-					++j;
-				}
-			}
-		}
-	}
-}
-
-/**
  * Updates the game's options with those in the configuration
  * file, if it exists yet, and any supplied on the command line.
  */
 void updateOptions()
 {
-	// Load existing options
+	// Load existing option
 	if (CrossPlatform::folderExists(_configFolder))
 	{
 		if (CrossPlatform::fileExists(_configFolder + "options.cfg"))
@@ -928,7 +930,7 @@ void updateOptions()
 			save();
 		}
 	}
-	// Create config folder and save options
+	// Create config folder and save option
 	else
 	{
 		CrossPlatform::createFolder(_configFolder);
@@ -939,7 +941,7 @@ void updateOptions()
 	//if (!_commandLine.empty())
 	for (std::vector<OptionInfo>::iterator i = _info.begin(); i != _info.end(); ++i)
 	{
-		i->load(_commandLine);
+		i->load(_commandLine, true);
 	}
 }
 
@@ -953,8 +955,8 @@ bool load(const std::string &filename)
 	std::string s = _configFolder + filename + ".cfg";
 	try
 	{
-		YAML::Node doc = YAML::LoadFile(s);
-		// Ignore old options files
+		YAML::Node doc = YAML::Load(*CrossPlatform::readFile(s));
+		// Ignore old options file
 		if (doc["options"]["NewBattleMission"])
 		{
 			return false;
@@ -1037,17 +1039,9 @@ void writeNode(const YAML::Node& node, YAML::Emitter& emitter)
  */
 bool save(const std::string &filename)
 {
-	std::string s = _configFolder + filename + ".cfg";
-	std::ofstream sav(s.c_str());
-	if (!sav)
-	{
-		Log(LOG_WARNING) << "Failed to save " << filename << ".cfg";
-		return false;
-	}
+	YAML::Emitter out;
 	try
 	{
-		YAML::Emitter out;
-
 		YAML::Node doc, node;
 		for (std::vector<OptionInfo>::iterator i = _info.begin(); i != _info.end(); ++i)
 		{
@@ -1064,25 +1058,25 @@ bool save(const std::string &filename)
 		}
 
 		writeNode(doc, out);
-
-		sav << out.c_str() << std::endl;
 	}
 	catch (YAML::Exception &e)
 	{
 		Log(LOG_WARNING) << e.what();
 		return false;
 	}
-	sav.close();
-	if (!sav)
+	std::string filepath = _configFolder + filename + ".cfg";
+	std::string data(out.c_str());
+
+	if (!CrossPlatform::writeFile(filepath, data + "\n" ))
 	{
-		Log(LOG_WARNING) << "Failed to save " << filename << ".cfg";
+		Log(LOG_WARNING) << "Failed to save " << filepath;
 		return false;
 	}
 	return true;
 }
 
 /**
- * Returns the game's current Data folder where resources
+ * Returns the game's current Data folder where resource
  * and X-Com files are loaded from.
  * @return Full path to Data folder.
  */
@@ -1092,13 +1086,14 @@ std::string getDataFolder()
 }
 
 /**
- * Changes the game's current Data folder where resources
+ * Changes the game's current Data folder where resource
  * and X-Com files are loaded from.
  * @param folder Full path to Data folder.
  */
 void setDataFolder(const std::string &folder)
 {
 	_dataFolder = folder;
+	Log(LOG_DEBUG) << "setDataFolder(" << folder <<");";
 }
 
 /**
@@ -1138,7 +1133,7 @@ std::string getConfigFolder()
  */
 std::string getMasterUserFolder()
 {
-	return _userFolder + _masterMod + CrossPlatform::PATH_SEPARATOR;
+	return _userFolder + _masterMod + "/";
 }
 
 /**
@@ -1194,6 +1189,9 @@ void backupDisplay()
 	Options::newFullscreen = Options::fullscreen;
 	Options::newAllowResize = Options::allowResize;
 	Options::newBorderless = Options::borderless;
+	Options::newNearestScaler = Options::useNearestScaler;
+	Options::newLinearScaler = Options::useLinearScaler;
+	Options::newAnisotropicScaler = Options::useAnisotropicScaler;
 }
 
 /**
@@ -1217,6 +1215,21 @@ void switchDisplay()
 	std::swap(fullscreen, newFullscreen);
 	std::swap(allowResize, newAllowResize);
 	std::swap(borderless, newBorderless);
+	std::swap(useNearestScaler, newNearestScaler);
+	std::swap(useLinearScaler, newLinearScaler);
+	std::swap(useAnisotropicScaler, newAnisotropicScaler);
+}
+
+void setUserFolder(const std::string &userFolder)
+{
+	_userFolder = userFolder;
+	Log(LOG_INFO) << "Options::setUserFolder: user folder set to " << _userFolder;
+}
+
+void setConfFolder(const std::string &confFolder)
+{
+	_configFolder = confFolder;
+	Log(LOG_INFO) << "Options::setConfFolder: config folder set to " << _configFolder;
 }
 
 }

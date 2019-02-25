@@ -17,7 +17,9 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "SellState.h"
+#include "ManufactureDependenciesTreeState.h"
 #include <algorithm>
+#include <locale>
 #include <sstream>
 #include <climits>
 #include <cmath>
@@ -29,6 +31,7 @@
 #include "../Interface/TextButton.h"
 #include "../Interface/Window.h"
 #include "../Interface/Text.h"
+#include "../Interface/TextEdit.h"
 #include "../Interface/TextList.h"
 #include "../Interface/ComboBox.h"
 #include "../Savegame/BaseFacility.h"
@@ -44,8 +47,13 @@
 #include "../Mod/RuleCraftWeapon.h"
 #include "../Engine/Timer.h"
 #include "../Engine/Options.h"
+#include "../Engine/CrossPlatform.h"
 #include "../Engine/Unicode.h"
 #include "../Mod/RuleInterface.h"
+#include "../Battlescape/DebriefingState.h"
+#include "TransferBaseState.h"
+#include "TechTreeViewerState.h"
+#include "../Ufopaedia/Ufopaedia.h"
 
 namespace OpenXcom
 {
@@ -56,14 +64,17 @@ namespace OpenXcom
  * @param base Pointer to the base to get info from.
  * @param origin Game section that originated this state.
  */
-SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _total(0), _spaceChange(0), _origin(origin)
+SellState::SellState(Base *base, DebriefingState *debriefingState, OptionsOrigin origin) : _base(base), _debriefingState(debriefingState), _sel(0), _total(0), _spaceChange(0), _origin(origin), _reset(false)
 {
-	bool overfull = Options::storageLimitsEnforced && _base->storesOverfull();
+	bool overfull = _debriefingState == 0 && Options::storageLimitsEnforced && _base->storesOverfull();
 
 	// Create objects
 	_window = new Window(this, 320, 200, 0, 0);
-	_btnOk = new TextButton(overfull? 288:148, 16, overfull? 16:8, 176);
+	_btnQuickSearch = new TextEdit(this, 48, 9, 10, 13);
+	//_btnOk = new TextButton(overfull? 288:148, 16, overfull? 16:8, 176);
+	_btnOk = new TextButton(148, 16, 8, 176);
 	_btnCancel = new TextButton(148, 16, 164, 176);
+	_btnTransfer = new TextButton(148, 16, 164, 176);
 	_txtTitle = new Text(310, 17, 5, 8);
 	_txtSales = new Text(150, 9, 10, 24);
 	_txtFunds = new Text(150, 9, 160, 24);
@@ -80,8 +91,10 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 	_ammoColor = _game->getMod()->getInterface("sellMenu")->getElement("ammoColor")->color;
 
 	add(_window, "window", "sellMenu");
+	add(_btnQuickSearch, "button", "sellMenu");
 	add(_btnOk, "button", "sellMenu");
 	add(_btnCancel, "button", "sellMenu");
+	add(_btnTransfer, "button", "sellMenu");
 	add(_txtTitle, "text", "sellMenu");
 	add(_txtSales, "text", "sellMenu");
 	add(_txtFunds, "text", "sellMenu");
@@ -105,17 +118,16 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 	_btnCancel->onMouseClick((ActionHandler)&SellState::btnCancelClick);
 	_btnCancel->onKeyboardPress((ActionHandler)&SellState::btnCancelClick, Options::keyCancel);
 
-	if (overfull)
-	{
-		_btnCancel->setVisible(false);
-		_btnOk->setVisible(false);
-	}
+	_btnTransfer->setText(tr("STR_GO_TO_TRANSFERS"));
+	_btnTransfer->onMouseClick((ActionHandler)&SellState::btnTransferClick);
+
+	_btnCancel->setVisible(!overfull);
+	_btnOk->setVisible(!overfull);
+	_btnTransfer->setVisible(overfull);
 
 	_txtTitle->setBig();
 	_txtTitle->setAlign(ALIGN_CENTER);
 	_txtTitle->setText(tr("STR_SELL_ITEMS_SACK_PERSONNEL"));
-
-	_txtSales->setText(tr("STR_VALUE_OF_SALES").arg(Unicode::formatFunding(_total)));
 
 	_txtFunds->setText(tr("STR_FUNDS").arg(Unicode::formatFunding(_game->getSavedGame()->getFunds())));
 
@@ -144,6 +156,7 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 	_lstItems->onRightArrowRelease((ActionHandler)&SellState::lstItemsRightArrowRelease);
 	_lstItems->onRightArrowClick((ActionHandler)&SellState::lstItemsRightArrowClick);
 	_lstItems->onMousePress((ActionHandler)&SellState::lstItemsMousePress);
+	_lstItems->onMouseWheel((ActionHandler)&SellState::lstItemsMouseWheel);
 
 	_cats.push_back("STR_ALL_ITEMS");
 
@@ -163,7 +176,7 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 
 	for (std::vector<Soldier*>::iterator i = _base->getSoldiers()->begin(); i != _base->getSoldiers()->end(); ++i)
 	{
-		if ((*i)->getCraft() == 0)
+		if ((*i)->getCraft() == 0 && _debriefingState == 0)
 		{
 			TransferRow row = { TRANSFER_SOLDIER, (*i), (*i)->getName(true), 0, 1, 0, 0 };
 			_items.push_back(row);
@@ -176,7 +189,7 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 	}
 	for (std::vector<Craft*>::iterator i = _base->getCrafts()->begin(); i != _base->getCrafts()->end(); ++i)
 	{
-		if ((*i)->getStatus() != "STR_OUT")
+		if ((*i)->getStatus() != "STR_OUT" && _debriefingState == 0)
 		{
 			TransferRow row = { TRANSFER_CRAFT, (*i), (*i)->getName(_game->getLanguage()), (*i)->getRules()->getSellCost(), 1, 0, 0 };
 			_items.push_back(row);
@@ -187,7 +200,7 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 			}
 		}
 	}
-	if (_base->getAvailableScientists() > 0)
+	if (_base->getAvailableScientists() > 0 && _debriefingState == 0)
 	{
 		TransferRow row = { TRANSFER_SCIENTIST, 0, tr("STR_SCIENTIST"), 0, _base->getAvailableScientists(), 0, 0 };
 		_items.push_back(row);
@@ -197,7 +210,7 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 			_cats.push_back(cat);
 		}
 	}
-	if (_base->getAvailableEngineers() > 0)
+	if (_base->getAvailableEngineers() > 0 && _debriefingState == 0)
 	{
 		TransferRow row = { TRANSFER_ENGINEER, 0, tr("STR_ENGINEER"), 0, _base->getAvailableEngineers(), 0, 0 };
 		_items.push_back(row);
@@ -226,9 +239,19 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 			}
 		}
 		RuleItem *rule = _game->getMod()->getItem(*i, true);
+		if (_debriefingState != 0)
+		{
+			qty = _debriefingState->getRecoveredItemCount(rule);
+		}
 		if (qty > 0 && (Options::canSellLiveAliens || !rule->isAlien()))
 		{
 			TransferRow row = { TRANSFER_ITEM, rule, tr(*i), rule->getSellCost(), qty, 0, 0 };
+			if ((_debriefingState != 0) && (_game->getSavedGame()->getAutosell(rule)))
+			{
+				row.amount = qty;
+				_total += row.cost * qty;
+				_spaceChange -= qty * rule->getSize();
+			}
 			_items.push_back(row);
 			std::string cat = getCategory(_items.size() - 1);
 			if (std::find(_cats.begin(), _cats.end(), cat) == _cats.end())
@@ -238,8 +261,49 @@ SellState::SellState(Base *base, OptionsOrigin origin) : _base(base), _sel(0), _
 		}
 	}
 
+	if (_game->getMod()->getUseCustomCategories())
+	{
+		// first find all relevant item categories
+		std::vector<std::string> tempCats;
+		for (std::vector<TransferRow>::iterator i = _items.begin(); i != _items.end(); ++i)
+		{
+			if ((*i).type == TRANSFER_ITEM)
+			{
+				RuleItem *rule = (RuleItem*)((*i).rule);
+				for (std::vector<std::string>::const_iterator j = rule->getCategories().begin(); j != rule->getCategories().end(); ++j)
+				{
+					if (std::find(tempCats.begin(), tempCats.end(), (*j)) == tempCats.end())
+					{
+						tempCats.push_back((*j));
+					}
+				}
+			}
+		}
+		// then use them nicely in order
+		_cats.clear();
+		_cats.push_back("STR_ALL_ITEMS");
+		const std::vector<std::string> &categories = _game->getMod()->getItemCategoriesList();
+		for (std::vector<std::string>::const_iterator k = categories.begin(); k != categories.end(); ++k)
+		{
+			if (std::find(tempCats.begin(), tempCats.end(), (*k)) != tempCats.end())
+			{
+				_cats.push_back((*k));
+			}
+		}
+	}
+
+	_txtSales->setText(tr("STR_VALUE_OF_SALES").arg(Unicode::formatFunding(_total)));
+
 	_cbxCategory->setOptions(_cats, true);
 	_cbxCategory->onChange((ActionHandler)&SellState::cbxCategoryChange);
+	_cbxCategory->onKeyboardPress((ActionHandler)&SellState::btnSellAllClick, Options::keySelectAll);
+
+	_btnQuickSearch->setText(""); // redraw
+	_btnQuickSearch->onEnter((ActionHandler)&SellState::btnQuickSearchApply);
+	_btnQuickSearch->setVisible(false);
+
+	// OK button is not always visible, so bind it here
+	_cbxCategory->onKeyboardRelease((ActionHandler)&SellState::btnQuickSearchToggle, Options::keyToggleQuickSearch);
 
 	updateList();
 
@@ -256,6 +320,20 @@ SellState::~SellState()
 {
 	delete _timerInc;
 	delete _timerDec;
+}
+
+/**
+* Resets stuff when coming back from other screens.
+*/
+void SellState::init()
+{
+	State::init();
+
+	if (_reset)
+	{
+		_game->popState();
+		_game->pushState(new SellState(_base, _debriefingState, _origin));
+	}
 }
 
 /**
@@ -309,19 +387,95 @@ std::string SellState::getCategory(int sel) const
 }
 
 /**
+ * Determines if a row item belongs to a given category.
+ * @param sel Selected row.
+ * @param cat Category.
+ * @returns True if row item belongs to given category, otherwise False.
+ */
+bool SellState::belongsToCategory(int sel, const std::string &cat) const
+{
+	switch (_items[sel].type)
+	{
+	case TRANSFER_SOLDIER:
+	case TRANSFER_SCIENTIST:
+	case TRANSFER_ENGINEER:
+	case TRANSFER_CRAFT:
+		return false;
+	case TRANSFER_ITEM:
+		RuleItem *rule = (RuleItem*)_items[sel].rule;
+		return rule->belongsToCategory(cat);
+	}
+	return false;
+}
+
+/**
+* Quick search toggle.
+* @param action Pointer to an action.
+*/
+void SellState::btnQuickSearchToggle(Action *action)
+{
+	if (_btnQuickSearch->getVisible())
+	{
+		_btnQuickSearch->setText("");
+		_btnQuickSearch->setVisible(false);
+		btnQuickSearchApply(action);
+	}
+	else
+	{
+		_btnQuickSearch->setVisible(true);
+		_btnQuickSearch->setFocus(true);
+	}
+}
+
+/**
+* Quick search.
+* @param action Pointer to an action.
+*/
+void SellState::btnQuickSearchApply(Action *)
+{
+	updateList();
+}
+
+/**
  * Filters the current list of items.
  */
 void SellState::updateList()
 {
+	std::string searchString = _btnQuickSearch->getText();
+	Unicode::upperCase(searchString);
+
 	_lstItems->clearList();
 	_rows.clear();
 	for (size_t i = 0; i < _items.size(); ++i)
 	{
+		// filter
 		std::string cat = _cats[_cbxCategory->getSelected()];
-		if (cat != "STR_ALL_ITEMS" && cat != getCategory(i))
+		if (_game->getMod()->getUseCustomCategories())
 		{
-			continue;
+			if (cat != "STR_ALL_ITEMS" && !belongsToCategory(i, cat))
+			{
+				continue;
+			}
 		}
+		else
+		{
+			if (cat != "STR_ALL_ITEMS" && cat != getCategory(i))
+			{
+				continue;
+			}
+		}
+
+		// quick search
+		if (!searchString.empty())
+		{
+			std::string projectName = _items[i].name;
+			Unicode::upperCase(projectName);
+			if (projectName.find(searchString) == std::string::npos)
+			{
+				continue;
+			}
+		}
+
 		std::string name = _items[i].name;
 		bool ammo = false;
 		if (_items[i].type == TRANSFER_ITEM)
@@ -389,9 +543,9 @@ void SellState::btnOkClick(Action *)
 				// Clear hangar
 				for (std::vector<BaseFacility*>::iterator f = _base->getFacilities()->begin(); f != _base->getFacilities()->end(); ++f)
 				{
-					if ((*f)->getCraft() == craft)
+					if ((*f)->getCraftForDrawing() == craft)
 					{
-						(*f)->setCraft(0);
+						(*f)->setCraftForDrawing(0);
 						break;
 					}
 				}
@@ -464,9 +618,27 @@ void SellState::btnOkClick(Action *)
 				{
 					_base->getStorageItems()->removeItem(item->getType(), i->amount);
 				}
+				if (_debriefingState != 0)
+				{
+					// set autosell status if we sold all of the item
+					_game->getSavedGame()->setAutosell(item, (i->qtySrc == i->amount));
+				}
+
 				break;
 			}
 		}
+		else
+		{
+			if (_debriefingState != 0 && i->type == TRANSFER_ITEM)
+			{
+				// disable autosell since we haven't sold any of the item.
+				_game->getSavedGame()->setAutosell((RuleItem*)i->rule, false);
+			}
+		}
+	}
+	if (_debriefingState != 0)
+	{
+		_debriefingState->setShowSellButton(false);
 	}
 	_game->popState();
 }
@@ -478,6 +650,32 @@ void SellState::btnOkClick(Action *)
 void SellState::btnCancelClick(Action *)
 {
 	_game->popState();
+}
+
+/**
+* Opens the Transfer UI and gives the player an option to transfer stuff instead of selling it.
+* Returns back to this screen when finished.
+* @param action Pointer to an action.
+*/
+void SellState::btnTransferClick(Action *)
+{
+	_reset = true;
+	_game->pushState(new TransferBaseState(_base));
+}
+
+/**
+* Increase all items to max, i.e. sell everything.
+* @param action Pointer to an action.
+*/
+void SellState::btnSellAllClick(Action *)
+{
+	size_t backup = _sel;
+	for (size_t i = 0; i < _lstItems->getRows(); ++i)
+	{
+		_sel = i;
+		changeByValue(INT_MAX, 1);
+	}
+	_sel = backup;
 }
 
 /**
@@ -557,30 +755,73 @@ void SellState::lstItemsRightArrowClick(Action *action)
 }
 
 /**
- * Handles the mouse-wheels on the arrow-buttons.
+ * Handles right- and middle-clicks.
  * @param action Pointer to an action.
  */
 void SellState::lstItemsMousePress(Action *action)
 {
 	_sel = _lstItems->getSelectedRow();
-	if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP)
+	if (action->getDetails()->button.button == SDL_BUTTON_RIGHT)
 	{
-		_timerInc->stop();
-		_timerDec->stop();
 		if (action->getAbsoluteXMouse() >= _lstItems->getArrowsLeftEdge() &&
 			action->getAbsoluteXMouse() <= _lstItems->getArrowsRightEdge())
 		{
-			changeByValue(Options::changeValueByMouseWheel, 1);
+			return;
+		}
+		if (getRow().type == TRANSFER_ITEM)
+		{
+			RuleItem *rule = (RuleItem*)getRow().rule;
+			if (rule != 0)
+			{
+				_game->pushState(new ManufactureDependenciesTreeState(rule->getType()));
+			}
 		}
 	}
-	else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN)
+	else if (action->getDetails()->button.button == SDL_BUTTON_MIDDLE)
+	{
+		if (getRow().type == TRANSFER_ITEM)
+		{
+			RuleItem *rule = (RuleItem*)getRow().rule;
+			if (rule != 0)
+			{
+				std::string articleId = rule->getType();
+				const RuleResearch *selectedTopic = _game->getMod()->getResearch(articleId, false);
+				bool ctrlPressed = SDL_GetModState() & KMOD_CTRL;
+				if (selectedTopic && !ctrlPressed)
+				{
+					_game->pushState(new TechTreeViewerState(selectedTopic, 0));
+				}
+				else
+				{
+					Ufopaedia::openArticle(_game, articleId);
+				}
+			}
+		}
+		else if (getRow().type == TRANSFER_CRAFT)
+		{
+			Craft *rule = (Craft*)getRow().rule;
+			if (rule != 0)
+			{
+				std::string articleId = rule->getRules()->getType();
+				Ufopaedia::openArticle(_game, articleId);
+			}
+		}
+	}
+}
+
+void SellState::lstItemsMouseWheel(Action *action)
+{
+	_sel = _lstItems->getSelectedRow();
+	const SDL_Event &ev(*action->getDetails());
+	if (ev.type == SDL_MOUSEWHEEL)
 	{
 		_timerInc->stop();
 		_timerDec->stop();
 		if (action->getAbsoluteXMouse() >= _lstItems->getArrowsLeftEdge() &&
 			action->getAbsoluteXMouse() <= _lstItems->getArrowsRightEdge())
 		{
-			changeByValue(Options::changeValueByMouseWheel, -1);
+			changeByValue(Options::changeValueByMouseWheel,
+					ev.wheel.y > 0 ? 1 : -1);
 		}
 	}
 }
@@ -706,7 +947,7 @@ void SellState::updateItemStrings()
 	}
 	ss3 << ":" << _base->getAvailableStores();
 	_txtSpaceUsed->setText(tr("STR_SPACE_USED").arg(ss3.str()));
-	if (Options::storageLimitsEnforced)
+	if (_debriefingState == 0 && Options::storageLimitsEnforced)
 	{
 		_btnOk->setVisible(!_base->storesOverfull(_spaceChange));
 	}

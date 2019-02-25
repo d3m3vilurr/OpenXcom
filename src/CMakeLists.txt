@@ -1,6 +1,7 @@
 set ( root_src
   lodepng.cpp
   main.cpp
+  ../libs/miniz/miniz.c
 )
 
 set ( basescape_src
@@ -8,14 +9,21 @@ set ( basescape_src
   Basescape/BaseView.cpp
   Basescape/BasescapeState.cpp
   Basescape/BuildFacilitiesState.cpp
+  Basescape/ChangeHeadquartersState.cpp
   Basescape/CraftArmorState.cpp
+  Basescape/CraftEquipmentLoadState.cpp
+  Basescape/CraftEquipmentSaveState.cpp
   Basescape/CraftEquipmentState.cpp
   Basescape/CraftInfoState.cpp
+  Basescape/CraftPilotSelectState.cpp
+  Basescape/CraftPilotsState.cpp
   Basescape/CraftSoldiersState.cpp
   Basescape/CraftWeaponsState.cpp
   Basescape/CraftsState.cpp
   Basescape/DismantleFacilityState.cpp
+  Basescape/GlobalResearchState.cpp
   Basescape/ManageAlienContainmentState.cpp
+  Basescape/ManufactureDependenciesTreeState.cpp
   Basescape/ManufactureInfoState.cpp
   Basescape/ManufactureStartState.cpp
   Basescape/ManufactureState.cpp
@@ -33,13 +41,18 @@ set ( basescape_src
   Basescape/SelectStartFacilityState.cpp
   Basescape/SellState.cpp
   Basescape/SoldierArmorState.cpp
+  Basescape/SoldierAvatarState.cpp
   Basescape/SoldierDiaryMissionState.cpp
   Basescape/SoldierDiaryOverviewState.cpp
   Basescape/SoldierDiaryPerformanceState.cpp
   Basescape/SoldierInfoState.cpp
   Basescape/SoldierMemorialState.cpp
+  Basescape/SoldierSortUtil.cpp
   Basescape/SoldiersState.cpp
+  Basescape/SoldierTransformationState.cpp
   Basescape/StoresState.cpp
+  Basescape/TechTreeSelectState.cpp
+  Basescape/TechTreeViewerState.cpp
   Basescape/TransferBaseState.cpp
   Basescape/TransferConfirmState.cpp
   Basescape/TransferItemsState.cpp
@@ -52,23 +65,30 @@ set ( battlescape_src
   Battlescape/ActionMenuState.cpp
   Battlescape/AliensCrashState.cpp
   Battlescape/AIModule.cpp
+  Battlescape/AlienInventory.cpp
+  Battlescape/AlienInventoryState.cpp
   Battlescape/BattleState.cpp
   Battlescape/BattlescapeGame.cpp
   Battlescape/BattlescapeGenerator.cpp
   Battlescape/BattlescapeMessage.cpp
   Battlescape/BattlescapeState.cpp
+  Battlescape/BriefingLightState.cpp
   Battlescape/BriefingState.cpp
   Battlescape/Camera.cpp
   Battlescape/CannotReequipState.cpp
   Battlescape/CommendationLateState.cpp
   Battlescape/CommendationState.cpp
+  Battlescape/ConfirmEndMissionState.cpp
   Battlescape/DebriefingState.cpp
   Battlescape/Explosion.cpp
   Battlescape/ExplosionBState.cpp
   Battlescape/InfoboxOKState.cpp
   Battlescape/InfoboxState.cpp
   Battlescape/Inventory.cpp
+  Battlescape/InventoryLoadState.cpp
+  Battlescape/InventorySaveState.cpp
   Battlescape/InventoryState.cpp
+  Battlescape/ItemSprite.cpp
   Battlescape/Map.cpp
   Battlescape/MedikitState.cpp
   Battlescape/MedikitView.cpp
@@ -117,10 +137,10 @@ set ( engine_src
   Engine/LocalizedText.cpp
   Engine/ModInfo.cpp
   Engine/Music.cpp
-  Engine/OpenGL.cpp
   Engine/OptionInfo.cpp
   Engine/Options.cpp
   Engine/Palette.cpp
+  Engine/Renderer.cpp
   Engine/RNG.cpp
   Engine/Scalers/hq2x.cpp
   Engine/Scalers/hq3x.cpp
@@ -131,6 +151,8 @@ set ( engine_src
   Engine/Scalers/scalebit.cpp
   Engine/Scalers/xbrz.cpp
   Engine/Screen.cpp
+  Engine/Script.cpp
+  Engine/SDLRenderer.cpp
   Engine/Sound.cpp
   Engine/SoundSet.cpp
   Engine/State.cpp
@@ -144,6 +166,7 @@ set ( engine_src
 set ( geoscape_src
   Geoscape/AlienBaseState.cpp
   Geoscape/AllocatePsiTrainingState.cpp
+  Geoscape/AllocateTrainingState.cpp
   Geoscape/BaseDefenseState.cpp
   Geoscape/BaseDestroyedState.cpp
   Geoscape/BaseNameState.cpp
@@ -153,6 +176,7 @@ set ( geoscape_src
   Geoscape/ConfirmLandingState.cpp
   Geoscape/ConfirmNewBaseState.cpp
   Geoscape/CraftErrorState.cpp
+  Geoscape/CraftNotEnoughPilotsState.cpp
   Geoscape/CraftPatrolState.cpp
   Geoscape/DogfightErrorState.cpp
   Geoscape/DogfightState.cpp
@@ -167,16 +191,23 @@ set ( geoscape_src
   Geoscape/MissionDetectedState.cpp
   Geoscape/MonthlyReportState.cpp
   Geoscape/MultipleTargetsState.cpp
+  Geoscape/NewPossibleCraftState.cpp
+  Geoscape/NewPossibleFacilityState.cpp
   Geoscape/NewPossibleManufactureState.cpp
+  Geoscape/NewPossiblePurchaseState.cpp
   Geoscape/NewPossibleResearchState.cpp
   Geoscape/ProductionCompleteState.cpp
   Geoscape/PsiTrainingState.cpp
   Geoscape/ResearchCompleteState.cpp
   Geoscape/ResearchRequiredState.cpp
   Geoscape/SelectDestinationState.cpp
+  Geoscape/SelectMusicTrackState.cpp
   Geoscape/TargetInfoState.cpp
+  Geoscape/TrainingFinishedState.cpp
+  Geoscape/TrainingState.cpp
   Geoscape/UfoDetectedState.cpp
   Geoscape/UfoLostState.cpp
+  Geoscape/UfoTrackerState.cpp
 )
 
 set ( interface_src
@@ -205,6 +236,7 @@ set ( menu_src
   Menu/CutsceneState.cpp
   Menu/DeleteGameState.cpp
   Menu/ErrorMessageState.cpp
+  Menu/HelloCommanderState.cpp
   Menu/ListGamesState.cpp
   Menu/ListLoadOriginalState.cpp
   Menu/ListLoadState.cpp
@@ -230,6 +262,7 @@ set ( menu_src
   Menu/SlideshowState.cpp
   Menu/StartState.cpp
   Menu/StatisticsState.cpp
+  Menu/TestPaletteState.cpp
   Menu/TestState.cpp
   Menu/VideoState.cpp
 )
@@ -240,6 +273,7 @@ set ( mod_src
   Mod/Armor.cpp
   Mod/ArticleDefinition.cpp
   Mod/City.cpp
+  Mod/CustomPalettes.cpp
   Mod/ExtraSounds.cpp
   Mod/ExtraSprites.cpp
   Mod/ExtraStrings.cpp
@@ -262,15 +296,20 @@ set ( mod_src
   Mod/RuleInterface.cpp
   Mod/RuleInventory.cpp
   Mod/RuleItem.cpp
+  Mod/RuleDamageType.cpp
   Mod/RuleManufacture.cpp
   Mod/RuleMissionScript.cpp
   Mod/RuleMusic.cpp
   Mod/RuleRegion.cpp
   Mod/RuleResearch.cpp
   Mod/RuleSoldier.cpp
+  Mod/RuleSoldierTransformation.cpp
+  Mod/RuleStatBonus.cpp
   Mod/RuleTerrain.cpp
   Mod/RuleUfo.cpp
   Mod/RuleVideo.cpp
+  Mod/RuleStartingCondition.cpp
+  Mod/RuleItemCategory.cpp
   Mod/SoldierNamePool.cpp
   Mod/SoundDefinition.cpp
   Mod/StatString.cpp
@@ -306,6 +345,7 @@ set ( savegame_src
   Savegame/SavedGame.cpp
   Savegame/SerializationHelper.cpp
   Savegame/Soldier.cpp
+  Savegame/SoldierAvatar.cpp
   Savegame/SoldierDeath.cpp
   Savegame/SoldierDiary.cpp
   Savegame/Target.cpp
@@ -336,6 +376,7 @@ set ( ufopedia_src
   Ufopaedia/ArticleStateTextImage.cpp
   Ufopaedia/ArticleStateUfo.cpp
   Ufopaedia/ArticleStateVehicle.cpp
+  Ufopaedia/StatsForNerdsState.cpp
   Ufopaedia/Ufopaedia.cpp
   Ufopaedia/UfopaediaSelectState.cpp
   Ufopaedia/UfopaediaStartState.cpp
@@ -348,7 +389,8 @@ endif ()
 if ( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
   if ( "${CMAKE_BUILD_TYPE}" STREQUAL "Debug" OR ENABLE_WARNING )
     # Enable more GCC warnings if requested or we are doing a Debug build.
-    add_definitions ( -Wall
+    add_definitions ( -Wall -Wextra
+      -Wsuggest-override
       -Winit-self
       -Wmissing-include-dirs
       -Wunknown-pragmas
@@ -359,10 +401,11 @@ if ( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES 
       -Wempty-body
       -Wuninitialized
       -Wignored-qualifiers
+      -Wno-unused-parameter
+      -Winline
+      -Wshadow
 # These warning options actually generate way too many warnings. Should be enabled later.
 #      -Weffc++
-#      -Winline
-#      -Wshadow
       )
     if ( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" )
       # add warning flags recognized by g++ but not by clang
@@ -373,22 +416,6 @@ if ( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES 
     if ( FATAL_WARNING )
       add_definitions ( -Werror )
     endif ()
-  endif ()
-
-# These warnings aren't worth polluting the code for
-  add_definitions (
-    -Wno-unused-function              # cross-platform functions
-    )
-  if ( "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" )
-    # add warning flags recognized by g++ but not by clang
-    add_definitions (
-      -Wno-missing-field-initializers # xbrz
-      )
-  elseif ( CMAKE_CXX_COMPILER_ID MATCHES "Clang" )
-    # add warning flags recognized by clang but not by g++
-    add_definitions (
-      -Wno-overloaded-virtual         # overloads with different parameters
-      )
   endif ()
 endif ()
 
@@ -411,6 +438,14 @@ if ( MSVC )
     add_definitions ( /WX )
   endif ( FATAL_WARNING )
 endif ()
+
+if ( DUMP_CORE )
+  set_source_files_properties ( main.cpp PROPERTIES COMPILE_FLAGS -DDUMP_CORE )
+endif ()
+
+remove_definitions( ../libs/miniz/miniz.c -Wsuggest-override )
+set_source_files_properties ( ../libs/miniz/miniz.c PROPERTIES COMPILE_FLAGS -DMINIZ_NO_STDIO )
+set_source_files_properties ( Engine/Scalers/xbrz.cpp PROPERTIES COMPILE_FLAGS -Wno-unused )
 
 if ( WIN32 )
   set ( application_type WIN32 )

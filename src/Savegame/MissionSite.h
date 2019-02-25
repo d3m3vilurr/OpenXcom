@@ -35,29 +35,32 @@ class MissionSite : public Target
 private:
 	const RuleAlienMission *_rules;
 	const AlienDeployment *_deployment;
+	const AlienDeployment *_missionCustomDeploy;
 	int _texture;
 	size_t _secondsRemaining;
 	std::string _race, _city;
 	bool _inBattlescape, _detected;
 public:
 	/// Creates a mission site.
-	MissionSite(const RuleAlienMission *rules, const AlienDeployment *deployment);
+	MissionSite(const RuleAlienMission *rules, const AlienDeployment *deployment, const AlienDeployment *alienWeaponDeploy);
 	/// Cleans up the mission site.
 	~MissionSite();
 	/// Loads the mission site from YAML.
-	void load(const YAML::Node& node);
+	void load(const YAML::Node& node) override;
 	/// Saves the mission site to YAML.
-	YAML::Node save() const;
+	YAML::Node save() const override;
 	/// Gets the waypoint's type.
-	std::string getType() const;
+	std::string getType() const override;
 	/// Gets the mission site's ruleset.
 	const RuleAlienMission *getRules() const;
 	/// Gets the mission site's deployment.
 	const AlienDeployment *getDeployment() const;
+	/// Gets the optional alien weapon deployment for site.
+	const AlienDeployment *getMissionCustomDeploy() const;
 	/// Gets the mission site's marker name.
-	std::string getMarkerName() const;
+	std::string getMarkerName() const override;
 	/// Gets the mission site's marker sprite.
-	int getMarker() const;
+	int getMarker() const override;
 	/// Gets the seconds until this mission site expires.
 	size_t getSecondsRemaining() const;
 	/// Sets the seconds until this mission site expires.

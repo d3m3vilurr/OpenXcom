@@ -22,6 +22,7 @@
 #include "ProjectileFlyBState.h"
 #include "TileEngine.h"
 #include "../Savegame/BattleUnit.h"
+#include "../Savegame/SavedBattleGame.h"
 #include "../Engine/RNG.h"
 #include "BattlescapeGame.h"
 #include "../Savegame/SavedBattleGame.h"
@@ -67,18 +68,28 @@ void UnitPanicBState::think()
 			BattleAction ba;
 			ba.actor = _unit;
 			ba.weapon = _unit->getMainHandWeapon();
-			if (ba.weapon && (ba.weapon->getRules()->getTUSnap() || ba.weapon->getRules()->getTUAuto())
-				&& _parent->getSave()->isItemUsable(ba.weapon->getRules()))
+			if (_parent->getSave()->canUseWeapon(ba.weapon, ba.actor, _berserking))
 			{
 				// make autoshots if possible.
-				if (ba.weapon->getRules()->getTUAuto())
-					ba.type = BA_AUTOSHOT;
-				else
+				ba.type = BA_AUTOSHOT;
+				ba.updateTU();
+				bool canShoot = ba.haveTU();
+
+				if (!canShoot)
+				{
 					ba.type = BA_SNAPSHOT;
+					ba.updateTU();
+					canShoot = ba.haveTU();
+				}
 
-				ba.TU = _unit->getActionTUs(ba.type, ba.weapon);
+				if (!canShoot)
+				{
+					ba.type = BA_AIMEDSHOT;
+					ba.updateTU();
+					canShoot = ba.haveTU();
+				}
 
-				if (_unit->getTimeUnits() >= ba.TU)
+				if (canShoot)
 				{
 					// if we see enemies, shoot at the closest living one.
 					if (!_unit->getVisibleUnits()->empty())
@@ -105,15 +116,12 @@ void UnitPanicBState::think()
 						turnCost = 8-turnCost;
 					}
 
+					_unit->spendTimeUnits(turnCost);
 					_parent->statePushFront(new UnitTurnBState(_parent, ba, false));
 					// even if we don't have enough TUs to turn AND shoot, we still want to turn.
-					if (_unit->spendTimeUnits(ba.TU + turnCost))
+					if (ba.haveTU())
 					{
 						_parent->statePushNext(new ProjectileFlyBState(_parent, ba));
-					}
-					else
-					{
-						_unit->spendTimeUnits(turnCost);
 					}
 				}
 			}
@@ -125,6 +133,7 @@ void UnitPanicBState::think()
 		}
 		// reset the unit's time units when all panicking is done
 		_unit->setTimeUnits(0);
+		_unit->moraleChange(+15);
 	}
 	_parent->popState();
 	_parent->setupCursor();

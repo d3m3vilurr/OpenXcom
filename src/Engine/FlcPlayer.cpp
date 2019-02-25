@@ -19,6 +19,7 @@
 
 /*
  * Based on http://www.libsdl.org/projects/flxplay/
+ * See also https://github.com/aseprite/flic
  */
 #ifdef _MSC_VER
 #ifndef _SCL_SECURE_NO_WARNINGS
@@ -30,7 +31,7 @@
 #include <cassert>
 #include <string.h>
 #include <SDL_mixer.h>
-#include <fstream>
+#include "FileMap.h"
 #include "Logger.h"
 #include "Screen.h"
 #include "Surface.h"
@@ -120,22 +121,13 @@ bool FlcPlayer::init(const char *filename, void(*frameCallBack)(), Game *game, b
 	_audioData.loadingBuffer = 0;
 	_audioData.playingBuffer = 0;
 
-	std::ifstream file;
-	file.open(filename, std::ifstream::in | std::ifstream::binary | std::ifstream::ate);
-	if (!file.is_open())
-	{
-		Log(LOG_ERROR) << "Could not open FLI/FLC file: " << filename;
-		return false;
-	}
-
-	std::streamoff size = file.tellg();
-	file.seekg(0, std::ifstream::beg);
-
-	// TODO: substitute with a cross-platform memory mapped file?
+	auto file = FileMap::getIStream(filename);
+	file->seekg(0, std::istream::end);
+	auto size = file->tellg();
+	file->seekg(0, std::istream::beg);
 	_fileBuf = new Uint8[size];
 	_fileSize = size;
-	file.read((char *)_fileBuf, size);
-	file.close();
+	file->read((char *)_fileBuf, size);
 
 	_audioFrameData = _fileBuf + 128;
 
@@ -158,13 +150,16 @@ bool FlcPlayer::init(const char *filename, void(*frameCallBack)(), Game *game, b
 	}
 
 	// If the current surface used is at 8bpp use it
-	if (_realScreen->getSurface()->getSurface()->format->BitsPerPixel == 8)
+	if (_realScreen->getSurface()->format->BitsPerPixel == 8)
 	{
-		_mainScreen = _realScreen->getSurface()->getSurface();
+		_mainScreen = _realScreen->getSurface();
 	}
 	else // Otherwise create a new one
 	{
-		_mainScreen = SDL_AllocSurface(SDL_SWSURFACE, _realScreen->getSurface()->getWidth(), _realScreen->getSurface()->getHeight(), 8, 0, 0, 0, 0);
+		// Actually, create a surface the same size as the _realScreen
+		_mainScreen = SDL_CreateRGBSurface(SDL_SWSURFACE,
+			_realScreen->getSurface()->w,
+			_realScreen->getSurface()->h, 8, 0, 0, 0, 0);
 	}
 
 	return true;
@@ -174,7 +169,7 @@ void FlcPlayer::deInit()
 {
 	if (_mainScreen != 0 && _realScreen != 0)
 	{
-		if (_mainScreen != _realScreen->getSurface()->getSurface())
+		if (_mainScreen != _realScreen->getSurface())
 			SDL_FreeSurface(_mainScreen);
 
 		_mainScreen = 0;
@@ -233,24 +228,30 @@ void FlcPlayer::SDLPolling()
 	{
 		switch (event.type)
 		{
+		case SDL_FINGERDOWN:
 		case SDL_MOUSEBUTTONDOWN:
 		case SDL_KEYDOWN:
 			_playingState = SKIPPED;
 			break;
-		case SDL_VIDEORESIZE:
-			if (Options::allowResize)
+		case SDL_WINDOWEVENT:
+			switch(event.window.event)
 			{
-				Options::newDisplayWidth = Options::displayWidth = std::max(Screen::ORIGINAL_WIDTH, event.resize.w);
-				Options::newDisplayHeight = Options::displayHeight = std::max(Screen::ORIGINAL_HEIGHT, event.resize.h);
-				if (_mainScreen != _realScreen->getSurface()->getSurface())
-				{
-					_realScreen->resetDisplay();
-				}
-				else
-				{
-					_realScreen->resetDisplay();
-					_mainScreen = _realScreen->getSurface()->getSurface();
-				}
+				case SDL_WINDOWEVENT_RESIZED:
+					if (Options::allowResize)
+					{
+						Options::newDisplayWidth = Options::displayWidth = std::max(Screen::ORIGINAL_WIDTH, event.window.data1);
+						Options::newDisplayHeight = Options::displayHeight = std::max(Screen::ORIGINAL_HEIGHT, event.window.data2);
+						if (_mainScreen != _realScreen->getSurface())
+						{
+							_realScreen->resetDisplay();
+						}
+						else
+						{
+							_realScreen->resetDisplay();
+							_mainScreen = _realScreen->getSurface();
+						}
+					}
+					break;
 			}
 			break;
 		case SDL_QUIT:
@@ -429,8 +430,8 @@ void FlcPlayer::playVideoFrame()
 
 	/* TODO: Track which rectangles have really changed */
 	//SDL_UpdateRect(_mainScreen, 0, 0, 0, 0);
-	if (_mainScreen != _realScreen->getSurface()->getSurface())
-		SDL_BlitSurface(_mainScreen, 0, _realScreen->getSurface()->getSurface(), 0);
+	if (_mainScreen != _realScreen->getSurface())
+		SDL_BlitSurface(_mainScreen, 0, _realScreen->getSurface(), 0);
 
 	_realScreen->flip();
 }
@@ -510,11 +511,12 @@ void FlcPlayer::color256()
 			_colors[i].r = *(pSrc++);
 			_colors[i].g = *(pSrc++);
 			_colors[i].b = *(pSrc++);
+                        _colors[i].a = 255;
 		}
 
-		if (_mainScreen != _realScreen->getSurface()->getSurface())
-			SDL_SetColors(_mainScreen, _colors, numColorsSkip, numColors);
 		_realScreen->setPalette(_colors, numColorsSkip, numColors, true);
+		SDL_SetPaletteColors(_mainScreen->format->palette, _colors, numColorsSkip, numColors);
+		_realScreen->getSurface();
 
 		if (numColorPackets >= 1)
 		{
@@ -725,11 +727,12 @@ void FlcPlayer::color64()
 			_colors[i].r = *(pSrc++) << 2;
 			_colors[i].g = *(pSrc++) << 2;
 			_colors[i].b = *(pSrc++) << 2;
+			_colors[i].a = 255;
 		}
 
-		if (_mainScreen != _realScreen->getSurface()->getSurface())
-			SDL_SetColors(_mainScreen, _colors, NumColorsSkip, NumColors);
 		_realScreen->setPalette(_colors, NumColorsSkip, NumColors, true);
+		SDL_SetPaletteColors(_mainScreen->format->palette, _colors, NumColorsSkip, NumColors);
+		_realScreen->getSurface();
 	}
 }
 

@@ -23,7 +23,9 @@
 #include <exception>
 #include <algorithm>
 #include <sstream>
+#include <fstream>
 #include <string>
+#include <list>
 #include <stdint.h>
 #include <time.h>
 #include <signal.h>
@@ -40,6 +42,7 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <shellapi.h>
 #ifndef __NO_DBGHELP
 #include <dbghelp.h>
 #endif
@@ -67,16 +70,28 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <pwd.h>
-#ifndef __vita__
-#include <execinfo.h>
-#endif
+#if defined(__vita__)
 #include "Unicode.h"
+#elif !defined(__ANDROID__)
+#include <execinfo.h>
+#include <Unicode.h>
+#endif
 #endif
 #include <SDL.h>
 #include <SDL_syswm.h>
 #ifdef __HAIKU__
 #include <FindDirectory.h>
 #include <StorageDefs.h>
+#endif
+#include "FileMap.h"
+#include "SDL2Helpers.h"
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <jni.h>
+#include "State.h"
+#include "Game.h"
+#include "../Menu/StartState.h"
 #endif
 
 #ifdef __vita__
@@ -111,6 +126,68 @@ void getErrorDialog()
 #endif
 }
 
+
+#ifdef _WIN32
+/**
+ * Takes a Windows multibyte filesystem path and converts it to a UTF-8 string.
+ * Also converts the path separator.
+ * @param pathW Filesystem path.
+ * @return UTF-8 string.
+ */
+static std::string pathFromWindows(const wchar_t *pathW) {
+	int sizeW = lstrlenW(pathW);
+	wchar_t *pathWLC = (wchar_t *)malloc(sizeof(wchar_t) * (sizeW + 1));
+	memcpy(pathWLC, pathW, sizeof(wchar_t) * (sizeW + 1));
+	CharLowerW(pathWLC);
+	int sizeU8 = WideCharToMultiByte(CP_UTF8, 0, pathWLC, sizeW, NULL, 0, NULL, NULL);
+	std::string pathU8(sizeU8, 0);
+	WideCharToMultiByte(CP_UTF8, 0, pathWLC, sizeW, &pathU8[0], sizeU8, NULL, NULL);
+	std::replace(pathU8.begin(), pathU8.end(), '\\', '/');
+	free(pathWLC);
+	return pathU8;
+}
+
+/**
+ * Takes a UTF-8 string and converts it to a Windows
+ * multibyte filesystem path.
+ * Also converts the path separator.
+ * @param path UTF-8 string.
+ * @param reslash Convert forward slashes to back ones.
+ * @return Filesystem path.
+ */
+static std::wstring pathToWindows(const std::string& path, bool reslash = true) {
+	std::string src = path;
+	if (reslash) {
+		std::replace(src.begin(), src.end(), '/', '\\');
+	}
+	int sizeW = MultiByteToWideChar(CP_UTF8, 0, &src[0], (int)src.size(), NULL, 0);
+	std::wstring pathW(sizeW, 0);
+	MultiByteToWideChar(CP_UTF8, 0, &src[0], (int)src.size(), &pathW[0], sizeW);
+	return pathW;
+}
+#endif
+
+static std::vector<std::string> args;
+
+/**
+ * Converts command-line args to UTF-8 on windows
+ */
+void processArgs (int argc, char *argv[])
+{
+	args.clear();
+#ifdef _WIN32
+	auto cmdlineW = GetCommandLineW();
+	int numArgs;
+	auto argvW = CommandLineToArgvW(cmdlineW, &numArgs);
+	for (int i=0; i< numArgs; ++i) { args.push_back(pathFromWindows(argvW[i])); }
+#else
+	for (int i=0; i< argc; ++i) { args.push_back(argv[i]); }
+#endif
+}
+
+/// Returns the command-line arguments
+const std::vector<std::string>& getArgs() { return args; }
+
 /**
  * Displays a message box with an error message.
  * @param error Error message.
@@ -118,7 +195,12 @@ void getErrorDialog()
 void showError(const std::string &error)
 {
 #ifdef _WIN32
-	MessageBoxA(NULL, error.c_str(), "OpenXcom Error", MB_ICONERROR | MB_OK);
+	auto titleW = pathToWindows("OpenXcom Error", false);
+	auto errorW = pathToWindows(error, false);
+	MessageBoxW(NULL, errorW.c_str(), titleW.c_str(), MB_ICONERROR | MB_OK);
+#elif defined (__ANDROID__)
+	// FIXME: How come there isn't an android popup for this? I think SDL2's can be used.
+	__android_log_print(ANDROID_LOG_ERROR, "OpenXcom", "%s", error.c_str());
 #else
 	if (errorDlg.empty())
 	{
@@ -172,27 +254,43 @@ std::vector<std::string> findDataFolders()
 	return list;
 #endif
 
-#ifdef _WIN32
-	char path[MAX_PATH];
+#ifdef __ANDROID__
+	// Stop being smart about finding data - it frustrates the users.
+	//list.push_back("/sdcard/openxcom/data/");
+	//list.push_back("/storage/extSdCard/openxcom/data/");
+	return list;
+#endif
 
+#ifdef _WIN32
+	std::unordered_set<std::string> seen; // avoid dups in case cwd = dirname(exe)
+	wchar_t pathW[MAX_PATH+1];
+	const std::wstring oxconst = pathToWindows("OpenXcom/");
 	// Get Documents folder
-	if (SHGetSpecialFolderPathA(NULL, path, CSIDL_PERSONAL, FALSE))
+	if (SHGetSpecialFolderPathW(NULL, pathW, CSIDL_PERSONAL, FALSE))
 	{
-		PathAppendA(path, "OpenXcom\\");
-		list.push_back(path);
+		PathAppendW(pathW, oxconst.c_str());
+		auto path = pathFromWindows(pathW);
+		Log(LOG_DEBUG) << "findDataFolders(): SHGetSpecialFolderPathW: " << path;
+		if (seen.end() == seen.find(path)) { seen.insert(path); list.push_back(path); }
 	}
 
 	// Get binary directory
-	if (GetModuleFileNameA(NULL, path, MAX_PATH) != 0)
+	if (GetModuleFileNameW(NULL, pathW, MAX_PATH) != 0)
 	{
-		PathRemoveFileSpecA(path);
-		list.push_back(path);
+		PathRemoveFileSpecW(pathW);
+		auto path = pathFromWindows(pathW);
+		path.push_back('/');
+		Log(LOG_DEBUG) << "findDataFolders(): GetModuleFileNameW/PathRemoveFileSpecW: " << path;
+		if (seen.end() == seen.find(path)) { seen.insert(path); list.push_back(path); }
 	}
 
 	// Get working directory
-	if (GetCurrentDirectoryA(MAX_PATH, path) != 0)
+	if (GetCurrentDirectoryW(MAX_PATH, pathW) != 0)
 	{
-		list.push_back(path);
+		auto path = pathFromWindows(pathW);
+		path.push_back('/');
+		Log(LOG_DEBUG) << "findDataFolders(): GetCurrentDirectoryW: " << path;
+		if (seen.end() == seen.find(path)) { seen.insert(path); list.push_back(path); }
 	}
 #else
 	char const *home = getHome();
@@ -269,29 +367,44 @@ std::vector<std::string> findUserFolders()
 	return list;
 #endif
 
+#ifdef __ANDROID__
+	list.push_back("/sdcard/openxcom/");
+	list.push_back("/storage/extSdCard/openxcom/");
+	return list;
+#endif
+
 #ifdef _WIN32
-	char path[MAX_PATH];
+	std::unordered_set<std::string> seen;
+	wchar_t pathW[MAX_PATH+1];
+	const std::wstring oxconst = pathToWindows("OpenXcom/");
+	const std::wstring usconst = pathToWindows("user/");
 
 	// Get Documents folder
-	if (SHGetSpecialFolderPathA(NULL, path, CSIDL_PERSONAL, FALSE))
+	if (SHGetSpecialFolderPathW(NULL, pathW, CSIDL_PERSONAL, FALSE))
 	{
-		PathAppendA(path, "OpenXcom\\");
-		list.push_back(path);
+		PathAppendW(pathW, oxconst.c_str());
+		auto path = pathFromWindows(pathW);
+		Log(LOG_DEBUG) << "findUserFolders(): SHGetSpecialFolderPathW: " << path;
+		if (seen.end() == seen.find(path)) { seen.insert(path); list.push_back(path); }
 	}
 
 	// Get binary directory
-	if (GetModuleFileNameA(NULL, path, MAX_PATH) != 0)
+	if (GetModuleFileNameW(NULL, pathW, MAX_PATH) != 0)
 	{
-		PathRemoveFileSpecA(path);
-		PathAppendA(path, "user\\");
-		list.push_back(path);
+		PathRemoveFileSpecW(pathW);
+		PathAppendW(pathW, usconst.c_str());
+		auto path = pathFromWindows(pathW);
+		Log(LOG_DEBUG) << "findUserFolders(): GetModuleFileNameW/PathRemoveFileSpecW: " << path;
+		if (seen.end() == seen.find(path)) { seen.insert(path); list.push_back(path); }
 	}
 
 	// Get working directory
-	if (GetCurrentDirectoryA(MAX_PATH, path) != 0)
+	if (GetCurrentDirectoryW(MAX_PATH, pathW) != 0)
 	{
-		PathAppendA(path, "user\\");
-		list.push_back(path);
+		PathAppendW(pathW, usconst.c_str());
+		auto path = pathFromWindows(pathW);
+		Log(LOG_DEBUG) << "findUserFolders(): GetCurrentDirectoryW: " << path;
+		if (seen.end() == seen.find(path)) { seen.insert(path); list.push_back(path); }
 	}
 #else
 #ifdef __HAIKU__
@@ -345,6 +458,10 @@ std::string findConfigFolder()
 	return "PROGDIR:";
 #endif
 
+#ifdef __ANDROID__
+	return "/sdcard/openxcom/";
+#endif
+
 #if defined(_WIN32) || defined(__APPLE__)
 	return "";
 #elif defined (__HAIKU__)
@@ -378,9 +495,6 @@ std::string searchDataFile(const std::string &filename)
 {
 	// Correct folder separator
 	std::string name = filename;
-#ifdef _WIN32
-	std::replace(name.begin(), name.end(), '/', PATH_SEPARATOR);
-#endif
 
 	// Check current data path
 	std::string path = Options::getDataFolder() + name;
@@ -408,9 +522,6 @@ std::string searchDataFolder(const std::string &foldername)
 {
 	// Correct folder separator
 	std::string name = foldername;
-#ifdef _WIN32
-	std::replace(name.begin(), name.end(), '/', PATH_SEPARATOR);
-#endif
 
 	// Check current data path
 	std::string path = Options::getDataFolder() + name;
@@ -443,7 +554,8 @@ std::string searchDataFolder(const std::string &foldername)
 bool createFolder(const std::string &path)
 {
 #ifdef _WIN32
-	int result = CreateDirectoryA(path.c_str(), 0);
+	auto pathW = pathToWindows(path);
+	int result = CreateDirectoryW(pathW.c_str(), 0);
 	if (result == 0)
 		return false;
 	else
@@ -468,25 +580,59 @@ bool createFolder(const std::string &path)
  * @param path Folder path.
  * @return Terminated path.
  */
-std::string endPath(const std::string &path)
+std::string convertPath(const std::string &path)
 {
-	if (!path.empty() && path.at(path.size()-1) != PATH_SEPARATOR)
-		return path + PATH_SEPARATOR;
+	if (!path.empty() && path.at(path.size()-1) != '/')
+		return path + '/';
 	return path;
 }
+#ifdef _WIN32
+static time_t FILETIME2mtime(FILETIME& ft) {
+	const long long int TICKS_PER_SECOND = 10000000;
+	const long long int EPOCH_DIFFERENCE = 11644473600LL;
+	long long int input = 0, temp = 0;
 
+	input = ((long long int)ft.dwHighDateTime)<<32;
+	input += ft.dwLowDateTime;
+	temp = input / TICKS_PER_SECOND;
+	temp = temp - EPOCH_DIFFERENCE;
+	return (time_t) temp;
+}
+#endif
 /**
  * Gets the name of all the files
  * contained in a certain folder.
  * @param path Full path to folder.
  * @param ext Extension of files ("" if it doesn't matter).
- * @return Ordered list of all the files.
+ * @return Ordered list of all the files in the form of tuple(filename, is_folder, mtime).
  */
-std::vector<std::string> getFolderContents(const std::string &path, const std::string &ext)
+std::vector<std::tuple<std::string, bool, time_t>> getFolderContents(const std::string &path, const std::string &ext)
 {
-	std::vector<std::string> files;
-
+	std::vector<std::tuple<std::string, bool, time_t>> files;
+#ifdef _WIN32
+	auto search_path = path + "/*";
+	if (!ext.empty()) { search_path += "." + ext; }
+	Log(LOG_VERBOSE) << "getFolderContents("<<path<<", "<<ext<<") -> " << search_path;
+	auto pathW = pathToWindows(search_path);
+	WIN32_FIND_DATAW ffd;
+	auto handle = FindFirstFileW(pathW.c_str(), &ffd);
+	if (handle == INVALID_HANDLE_VALUE) {
+		Log(LOG_VERBOSE) << "getFolderContents("<<path<<", "<<ext<<"): fail outright.";
+		return files;
+	}
+	do  {
+		auto filename = pathFromWindows(ffd.cFileName);
+		if ((filename == ".") || (filename == "..")) { continue; }
+		time_t mtime = FILETIME2mtime(ffd.ftLastWriteTime);
+		bool is_folder = ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
+		files.push_back(std::make_tuple(filename, is_folder, mtime));
+		Log(LOG_VERBOSE) << "getFolderContents("<<path<<", "<<ext<<"): got '"<<filename<<"'";
+	} while (FindNextFileW(handle, &ffd) != 0);
+	FindClose(handle);
+	Log(LOG_VERBOSE) << "getFolderContents("<<path<<", "<<ext<<"): total "<<files.size();
+#else
 	DIR *dp = opendir(path.c_str());
+
 	if (dp == 0)
 	{
 	#ifdef __MORPHOS__
@@ -496,25 +642,24 @@ std::vector<std::string> getFolderContents(const std::string &path, const std::s
 		throw Exception(errorMessage);
 	#endif
 	}
-
 	struct dirent *dirp;
-	while ((dirp = readdir(dp)) != 0)
-	{
-		std::string file = dirp->d_name;
-
-		if (file == "." || file == "..")
-		{
-			continue;
-		}
-		if (!compareExt(file, ext))
-		{
-			continue;
-		}
-
-		files.push_back(file);
+	while ((dirp = readdir(dp)) != 0) {
+		std::string filename = dirp->d_name;
+		if (filename == "." || filename == "..") { continue; }
+		if (!compareExt(filename, ext))	{ continue; }
+		std::string fullpath = path + "/" + filename;
+		bool is_directory = folderExists(fullpath);
+		time_t mtime = getDateModified(fullpath);
+		files.push_back(std::make_tuple(filename, is_directory, mtime));
 	}
 	closedir(dp);
-	std::sort(files.begin(), files.end());
+#endif
+	std::sort(files.begin(), files.end(),
+		[](const std::tuple<std::string,bool,time_t>& a,
+           const std::tuple<std::string,bool,time_t>& b) -> bool
+       {
+         return std::get<0>(a) > std::get<0>(b);
+       });
 	return files;
 }
 
@@ -526,7 +671,10 @@ std::vector<std::string> getFolderContents(const std::string &path, const std::s
 bool folderExists(const std::string &path)
 {
 #ifdef _WIN32
-	return (PathIsDirectoryA(path.c_str()) != FALSE);
+	auto pathW = pathToWindows(path);
+	bool rv = (PathIsDirectoryW(pathW.c_str()) != FALSE);
+	Log(LOG_VERBOSE) << "folderExists("<<path<<")? " << (rv ? "yeah" : "nope");
+	return rv;
 #elif __MORPHOS__
 	BPTR l = Lock( path.c_str(), SHARED_LOCK );
 	if ( l != NULL )
@@ -549,7 +697,10 @@ bool folderExists(const std::string &path)
 bool fileExists(const std::string &path)
 {
 #ifdef _WIN32
-	return (PathFileExistsA(path.c_str()) != FALSE);
+	auto pathW = pathToWindows(path);
+	bool rv = (PathFileExistsW(pathW.c_str()) != FALSE);
+	Log(LOG_VERBOSE) << "fileExists("<<path<<")? " << (rv?"yeah":"nope");
+	return rv;
 #elif __MORPHOS__
 	BPTR l = Lock( path.c_str(), SHARED_LOCK );
 	if ( l != NULL )
@@ -572,7 +723,8 @@ bool fileExists(const std::string &path)
 bool deleteFile(const std::string &path)
 {
 #ifdef _WIN32
-	return (DeleteFileA(path.c_str()) != 0);
+	auto pathW = pathToWindows(path);
+	return (DeleteFileW(pathW.c_str()) != 0);
 #else
 	return (remove(path.c_str()) == 0);
 #endif
@@ -585,7 +737,7 @@ bool deleteFile(const std::string &path)
  */
 std::string baseFilename(const std::string &path)
 {
-	size_t sep = path.find_last_of("/\\");
+	size_t sep = path.find_last_of('/');
 	std::string filename;
 	if (sep == std::string::npos)
 	{
@@ -616,8 +768,10 @@ std::string sanitizeFilename(const std::string &filename)
 			(*i) == '>' ||
 			(*i) == ':' ||
 			(*i) == '"' ||
+			(*i) == '\'' ||
 			(*i) == '/' ||
-			(*i) == '?' ||
+			(*i) == '?'||
+			(*i) == '\0'||
 			(*i) == '\\')
 		{
 			*i = '_';
@@ -687,6 +841,13 @@ bool compareExt(const std::string &filename, const std::string &extension)
  */
 std::string getLocale()
 {
+#ifdef __ANDROID__
+	if (Options::systemLocale.length() > 0)
+	{
+		return Options::systemLocale;
+	}
+	return std::string("en-US");
+#endif
 #ifdef _WIN32
 	char language[9], country[9];
 
@@ -746,7 +907,6 @@ bool isQuitShortcut(const SDL_Event &ev)
 	return false;
 #endif
 }
-
 /**
  * Gets the last modified date of a file.
  * @param path Full path to file.
@@ -754,21 +914,20 @@ bool isQuitShortcut(const SDL_Event &ev)
  */
 time_t getDateModified(const std::string &path)
 {
-/*#ifdef _WIN32
-	WIN32_FILE_ATTRIBUTE_DATA info;
-	if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &info))
-	{
-		FILETIME ft = info.ftLastWriteTime;
-		LARGE_INTEGER li;
-		li.HighPart = ft.dwHighDateTime;
-		li.LowPart = ft.dwLowDateTime;
-		return li.QuadPart;
-	}
-	else
-	{
+#ifdef _WIN32
+	time_t rv = 0;
+	auto pathW = pathToWindows(path);
+	auto fh = CreateFileW(pathW.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+	if (fh == INVALID_HANDLE_VALUE) {
 		return 0;
 	}
-#endif*/
+	FILETIME ftCreate, ftAccess, ftWrite;
+	if (GetFileTime(fh, &ftCreate, &ftAccess, &ftWrite)) {
+		rv = FILETIME2mtime(ftWrite);
+	}
+	CloseHandle(fh);
+	return rv;
+#else
 	struct stat info;
 	if (stat(path.c_str(), &info) == 0)
 	{
@@ -778,6 +937,7 @@ time_t getDateModified(const std::string &path)
 	{
 		return 0;
 	}
+#endif
 }
 
 /**
@@ -803,11 +963,51 @@ std::pair<std::string, std::string> timeToString(time_t time)
 	GetDateFormatW(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, localDate, 25);
 	GetTimeFormatW(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, localTime, 25);
 #endif*/
-
 	struct tm *timeinfo = localtime(&(time));
+#ifdef __ANDROID__
+	/* oh android, why do you have to be so broken...*/
+	std::ostringstream aLocalDate, aLocalTime;
+
+	/*char cLocalDate[25], cLocalTime[25];
+	strftime(cLocalDate, 25, "%Y-%m-%d", timeinfo);
+	strftime(cLocalTime, 25, "%H:%M", timeinfo);
+	for(int i=0; i < 25; ++i)
+	{
+		localDate[i] = cLocalDate[i];
+		localTime[i] = cLocalTime[i];
+	}*/
+
+	aLocalDate << (1900 + timeinfo->tm_year);
+	aLocalDate << "-";
+	if (timeinfo->tm_mon < 9)
+	{
+		aLocalDate << "0";
+	}
+	aLocalDate << timeinfo->tm_mon + 1;
+	aLocalDate << "-";
+	if (timeinfo->tm_mday < 10)
+	{
+		aLocalDate << "0";
+	}
+	aLocalDate << timeinfo->tm_mday;
+
+	if (timeinfo->tm_hour < 10)
+	{
+		aLocalTime << "0";
+	}
+	aLocalTime << timeinfo->tm_hour;
+	aLocalTime << ":";
+	if (timeinfo->tm_min < 10)
+	{
+		aLocalTime << "0";
+	}
+	aLocalTime << timeinfo->tm_min;
+	return std::make_pair(aLocalDate.str(), aLocalTime.str());
+
+#else
 	strftime(localDate, 25, "%Y-%m-%d", timeinfo);
 	strftime(localTime, 25, "%H:%M", timeinfo);
-
+#endif
 	return std::make_pair(localDate, localTime);
 }
 
@@ -821,8 +1021,12 @@ std::pair<std::string, std::string> timeToString(time_t time)
 bool moveFile(const std::string &src, const std::string &dest)
 {
 #ifdef _WIN32
-	return (MoveFileExA(src.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING) != 0);
+	auto srcW = pathToWindows(src);
+	auto dstW = pathToWindows(dest);
+	return (MoveFileExW(srcW.c_str(), dstW.c_str(), MOVEFILE_REPLACE_EXISTING) != 0);
 #else
+	// TODO In fact all remaining uses of this are renaming files inside a single directory
+	// so we may as well uncomment the rename() and drop the rest.
 	//return (rename(src.c_str(), dest.c_str()) == 0);
 	std::ifstream srcStream;
 	std::ofstream destStream;
@@ -845,16 +1049,83 @@ bool moveFile(const std::string &src, const std::string &dest)
 }
 
 /**
+ * Writes a file.
+ * @param filename - where to writeFile
+ * @param data - what to writeFile
+ * @return if we did write it.
+ */
+bool writeFile(const std::string& filename, const std::string& data) {
+	// Even SDL1 file IO accepts UTF-8 file names on windows.
+	SDL_RWops *rwops = SDL_RWFromFile(filename.c_str(), "w");
+	if (!rwops) {
+		Log(LOG_ERROR) << "Failed to write " << filename << ": " << SDL_GetError();
+		return false;
+	}
+	if (1 != SDL_RWwrite(rwops, data.c_str(), data.size(), 1)) {
+		Log(LOG_ERROR) << "Failed to write " << filename << ": " << SDL_GetError();
+		SDL_RWclose(rwops);
+		return false;
+	}
+	SDL_RWclose(rwops);
+	return true;
+}
+
+/**
+ * Writes a file.
+ * @param filename - where to writeFile
+ * @param data - what to writeFile
+ * @return if we did write it.
+ */
+bool writeFile(const std::string& filename, const std::vector<unsigned char>& data) {
+	// Even SDL1 file IO accepts UTF-8 file names on windows.
+	SDL_RWops *rwops = SDL_RWFromFile(filename.c_str(), "wb");
+	if (!rwops) {
+		Log(LOG_ERROR) << "Failed to write " << filename << ": " << SDL_GetError();
+		return false;
+	}
+	if (1 != SDL_RWwrite(rwops, data.data(), data.size(), 1)) {
+		Log(LOG_ERROR) << "Failed to write " << filename << ": " << SDL_GetError();
+		SDL_RWclose(rwops);
+		return false;
+	}
+	SDL_RWclose(rwops);
+	return true;
+}
+
+/**
+ * Gets an istream to a file
+ * @param filename - what to readFile
+ * @return the istream
+ */
+std::unique_ptr<std::istream> readFile(const std::string& filename) {
+	SDL_RWops *rwops = SDL_RWFromFile(filename.c_str(), "r");
+	if (!rwops) {
+		std::string err = "Failed to read " + filename + ": " + SDL_GetError();
+		Log(LOG_ERROR) << err;
+		throw Exception(err);
+	}
+	size_t size;
+	char *data = (char *)SDL_LoadFile_RW(rwops, &size, SDL_TRUE);
+	if (data == NULL) {
+		std::string err = "Failed to read " + filename + ": " + SDL_GetError();
+		Log(LOG_ERROR) << err;
+		throw Exception(err);
+	}
+	std::string datastr(data, size);
+	return std::unique_ptr<std::istream>(new std::istringstream(datastr));
+}
+
+/**
  * Notifies the user that maybe he should have a look.
  */
-void flashWindow()
+void flashWindow(SDL_Window *winPtr)
 {
 #ifdef _WIN32
 	SDL_SysWMinfo wminfo;
 	SDL_VERSION(&wminfo.version)
-	if (SDL_GetWMInfo(&wminfo))
+	if (SDL_GetWindowWMInfo(winPtr, &wminfo) == SDL_TRUE)
 	{
-		HWND hwnd = wminfo.window;
+		HWND hwnd = wminfo.info.win.window;
 		FlashWindow(hwnd, true);
 	}
 #endif
@@ -913,33 +1184,167 @@ std::string getDosPath()
  * @param winResource ID for Windows icon.
  * @param unixPath Path to PNG icon for Unix.
  */
-#ifdef _WIN32
-void setWindowIcon(int winResource, const std::string &)
+void setWindowIcon(int winResource, const std::string &unixPath, SDL_Window *winPtr)
 {
+#ifdef _WIN32
 	HINSTANCE handle = GetModuleHandle(NULL);
 	HICON icon = LoadIcon(handle, MAKEINTRESOURCE(winResource));
 
 	SDL_SysWMinfo wminfo;
 	SDL_VERSION(&wminfo.version)
-	if (SDL_GetWMInfo(&wminfo))
+	if (SDL_GetWindowWMInfo(winPtr, &wminfo))
 	{
-		HWND hwnd = wminfo.window;
+		HWND hwnd = wminfo.info.win.window;
 		SetClassLongPtr(hwnd, GCLP_HICON, (LONG_PTR)icon);
 	}
-}
+#elif __ANDROID__
+	/* Android app has its icon and title set by the Java portion, no need to do anything here */
+	return;
 #else
-void setWindowIcon(int, const std::string &unixPath)
-{
-	std::string utf8 = Unicode::convPathToUtf8(unixPath);
-	SDL_Surface *icon = IMG_Load(utf8.c_str());
+	SDL_Surface *icon = IMG_Load_RW(FileMap::getRWops(unixPath), SDL_TRUE);
 	if (icon != 0)
 	{
-		SDL_WM_SetIcon(icon, NULL);
+		SDL_SetWindowIcon(winPtr, icon);
 		SDL_FreeSurface(icon);
 	}
+#endif
 }
+
+void findDirDialog()
+{
+#ifdef __ANDROID__
+	JNIEnv *env = (JNIEnv*) SDL_AndroidGetJNIEnv();
+	jobject instance = (jobject) SDL_AndroidGetActivity();
+	jclass oxcJClass = env->GetObjectClass(instance);
+	jmethodID showDirDialogMethod = env->GetMethodID(oxcJClass, "showDirDialog", "()V");
+	if (showDirDialogMethod != NULL)
+	{
+		Log(LOG_INFO) << "Found candidate method ID: " << showDirDialogMethod;
+		env->CallVoidMethod(instance, showDirDialogMethod);
+	}
+	else
+	{
+		Log(LOG_INFO) << "Could not find showDirDialog method!";
+	}
+	env->DeleteLocalRef(instance);
+	Log(LOG_INFO) << "Returned to native code!";
+#endif
+}
+
+void setSystemUI()
+{
+#ifdef __ANDROID__
+	JNIEnv *env = (JNIEnv*) SDL_AndroidGetJNIEnv();
+	jobject instance = (jobject) SDL_AndroidGetActivity();
+	jclass oxcJClass = env->GetObjectClass(instance);
+	jmethodID changeSystemUIMethod = env->GetMethodID(oxcJClass, "changeSystemUI", "(I)V");
+	jvalue SysUIArg;
+	SysUIArg.i = Options::systemUI;
+	if (changeSystemUIMethod != NULL)
+	{
+		env->CallVoidMethodA(instance, changeSystemUIMethod, &SysUIArg);
+	}
+	else
+	{
+		Log(LOG_INFO) << "Could not find changeSystemUI method!";
+	}
+	env->DeleteLocalRef(instance);
+#endif
+}
+
+#ifdef __ANDROID__
+	// This loads up new paths for the game and restarts. Called from Java.
+	void Java_org_libsdl_openxcom_OpenXcom_nativeSetPaths(JNIEnv* env, jclass cls, jstring gamePath, jstring savePath, jstring confPath)
+	{
+		Log(LOG_INFO) << "Re-setting paths...";
+		const char *gamePathString = env->GetStringUTFChars(gamePath, 0);
+		const char *savePathString = env->GetStringUTFChars(savePath, 0);
+		const char *confPathString = env->GetStringUTFChars(confPath, 0);
+		std::string dataFolder(gamePathString);
+		std::string saveFolder(savePathString);
+		std::string confFolder(confPathString);
+		Log(LOG_INFO) << "Data folder is: " << dataFolder;
+		Log(LOG_INFO) << "User folder is: " << saveFolder;
+		Log(LOG_INFO) << "Conf folder is: " << confFolder;
+	    env->ReleaseStringUTFChars(gamePath, gamePathString);
+	    env->ReleaseStringUTFChars(savePath, savePathString);
+	    env->ReleaseStringUTFChars(confPath, confPathString);
+		// The correct resource reloading requires us to
+		// re-initialize the whole game. Oh well.
+		const char* argv[] = {"openxcom.apk",
+						"-locale", Options::systemLocale.c_str(),
+						"-data", dataFolder.c_str(),
+						"-user", saveFolder.c_str(),
+						"-cfg", confFolder.c_str()};
+        processArgs(sizeof(argv) / sizeof(char*), (char**)argv);
+        Game *game = State::getGame();
+        if (Options::init()) {
+                game->setState(new StartState);
+        } else {
+                game->quit();
+        }
+	}
+
+
 #endif
 
+// Get system version (for Androids)
+int getSystemVersion()
+{
+#ifdef __ANDROID__
+	static int version;
+	if (version)
+	{
+		return version;
+	}
+	JNIEnv* env = (JNIEnv*) SDL_AndroidGetJNIEnv();
+	jclass versionClass = env->FindClass("android/os/Build$VERSION");
+	if (versionClass)
+	{
+		jfieldID versionField = env->GetStaticFieldID(versionClass,
+					"SDK_INT",
+					"I");
+		version = env->GetStaticIntField(versionClass,
+					versionField);
+	}
+	return version;
+#else
+	return 10;
+#endif
+}
+
+// Get pointing device status (replaces SDL_GetMouseState)
+int getPointerState(int *x, int *y)
+{
+	unsigned int mouseState = SDL_GetMouseState(x, y);
+	if (mouseState)
+	{
+		return mouseState;
+	}
+	int numTouch = SDL_GetNumTouchDevices();
+	for (int i = 0; i < numTouch; i++)
+	{
+		SDL_TouchID touchDevice = SDL_GetTouchDevice(i);
+		if (SDL_GetNumTouchFingers(touchDevice))
+		{
+			// Emulate mouse behavior
+			if (x || y) {
+				// WARNING: May be broken as hell.
+				SDL_Finger *finger = SDL_GetTouchFinger(touchDevice, 0);
+				if (x) {
+					*x = finger->x * Options::displayWidth;
+				}
+				if (y) {
+					*y = finger->y * Options::displayHeight;
+				}
+			}
+			// TODO: Maybe use multiple fingers to simulate middle and right buttons?
+			return SDL_BUTTON(SDL_BUTTON_LEFT);
+		}
+	}
+	// No mouse presses or touches detected.
+	return mouseState;
+}
 /**
  * Logs the stack back trace leading up to this function call.
  * @param ctx Pointer to stack context (PCONTEXT on Windows), NULL to use current context.
@@ -1051,7 +1456,7 @@ void stackTrace(void *ctx)
 			if (SymGetLineFromAddr64(process, frame.AddrPC.Offset, &displacement, line))
 			{
 				std::string filename = line->FileName;
-				size_t n = filename.find_last_of(PATH_SEPARATOR);
+				size_t n = filename.find_last_of('\\');
 				if (n != std::string::npos)
 				{
 					filename = filename.substr(n + 1);
@@ -1077,6 +1482,9 @@ void stackTrace(void *ctx)
 #else
 	Log(LOG_FATAL) << "Unfortunately, no stack trace information is available";
 #endif
+#elif defined(__ANDROID__)
+#warning Stack trace not supported on Android yet!
+	Log(LOG_FATAL) << "Unfortunately, no stack trace information is available";
 #else
 	const int MAX_STACK_FRAMES = 16;
 	void *array[MAX_STACK_FRAMES];
@@ -1146,7 +1554,10 @@ void crashDump(void *ex, const std::string &err)
 		break;
 	}
 	Log(LOG_FATAL) << "A fatal error has occurred: " << error.str();
-	stackTrace(exception->ContextRecord);
+	if (ex)
+	{
+		stackTrace(exception->ContextRecord);
+	}
 	std::string dumpName = Options::getUserFolder();
 	dumpName += now() + ".dmp";
 	HANDLE dumpFile = CreateFileA(dumpName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -1185,9 +1596,81 @@ void crashDump(void *ex, const std::string &err)
 #endif
 	std::ostringstream msg;
 	msg << "OpenXcom has crashed: " << error.str() << std::endl;
-	msg << "More details here: " << Logger::logFile() << std::endl;
+	msg << "More details here: " << getLogFileName() << std::endl;
 	msg << "If this error was unexpected, please report it to the developers.";
 	showError(msg.str());
+}
+
+
+/**
+ * Appends a file, logs nothing to avoid recursion.
+ * @param filename - where to writeFile
+ * @param data - what to writeFile
+ * @return if we did write it.
+ */
+static bool logToFile(const std::string& filename, const std::string& data) {
+	// Even SDL1 file IO accepts UTF-8 file names on windows.
+	SDL_RWops *rwops = SDL_RWFromFile(filename.c_str(), "a+");
+	if (rwops) {
+		auto rv = SDL_RWwrite(rwops, data.c_str(), data.size(), 1);
+		SDL_RWclose(rwops);
+		return rv == 1;
+	}
+	return false;
+}
+
+static const size_t LOG_BUFFER_LIMIT = 1<<10;
+static std::list<std::pair<int, std::string>> logBuffer;
+static std::string logFileName;
+const std::string& getLogFileName() { return logFileName; }
+
+/**
+ * Setting the log file name and setting the effective reportingLevel
+ * to not LOG_UNCENSORED turns off buffering of the log messages,
+ * and turns on writing them to the actual log (and flushes the buffer).
+ */
+void setLogFileName(const std::string& name) {
+	deleteFile(name);
+	size_t sz = logBuffer.size();
+	Log(LOG_DEBUG) << "setLogFileName("<<name<<") was '"<<logFileName<<"'; "<<sz<<" in buffer";
+	logFileName = name;
+}
+void log(int level, const std::ostringstream& baremsgstream) {
+	std::ostringstream msgstream;
+	msgstream << "[" << CrossPlatform::now() << "]" << "\t"
+			  << "[" << Logger::toString(level) << "]" << "\t"
+			  << baremsgstream.str() << std::endl;
+	auto msg = msgstream.str();
+
+	int effectiveLevel = Logger::reportingLevel();
+	if (effectiveLevel >= LOG_DEBUG) {
+		fwrite(msg.c_str(), msg.size(), 1, stderr);
+		fflush(stderr);
+	}
+	if (logBuffer.size() > LOG_BUFFER_LIMIT) { // drop earliest message so as to not eat all memory
+		logBuffer.pop_front();
+	}
+	if (logFileName.empty() || effectiveLevel == LOG_UNCENSORED) { // no log file; accumulate.
+		logBuffer.push_back(std::make_pair(level, msg));
+		return;
+	}
+	// attempt to flush the buffer
+	bool failed = false;
+	while (!logBuffer.empty()) {
+		if (effectiveLevel >= logBuffer.front().first) {
+			if (!logToFile(logFileName, logBuffer.front().second)) {
+				std::string err = "Failed to append to '" + logFileName + "': " + SDL_GetError();
+				logBuffer.push_back(std::make_pair(LOG_ERROR, err));
+				failed = true;
+				break;
+			}
+		}
+		logBuffer.pop_front();
+	}
+	// retain the current message if write fails.
+	if (failed || !logToFile(logFileName, msg)) {
+		logBuffer.push_back(std::make_pair(level, msg));
+	}
 }
 
 }

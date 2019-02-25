@@ -16,11 +16,13 @@
  * You should have received a copy of the GNU General Public License
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <algorithm>
 #include "ListLoadState.h"
 #include <algorithm>
 #include "../Engine/Game.h"
 #include "../Engine/LocalizedText.h"
 #include "../Engine/Action.h"
+#include "../Engine/Options.h"
 #include "../Interface/Text.h"
 #include "../Interface/TextButton.h"
 #include "../Interface/TextList.h"
@@ -79,24 +81,55 @@ void ListLoadState::lstSavesPress(Action *action)
 	ListGamesState::lstSavesPress(action);
 	if (action->getDetails()->button.button == SDL_BUTTON_LEFT)
 	{
-		bool confirm = false;
-		const SaveInfo &saveInfo(_saves[_lstSaves->getSelectedRow()]);
-		for (std::vector<std::string>::const_iterator i = saveInfo.mods.begin(); i != saveInfo.mods.end(); ++i)
+		loadSave(_lstSaves->getSelectedRow());
+	}
+}
+void ListLoadState::loadSave(size_t list_idx)
+{
+	bool confirm = false;
+	const SaveInfo &saveInfo(_saves[list_idx]);
+	for (std::vector<std::string>::const_iterator i = saveInfo.mods.begin(); i != saveInfo.mods.end(); ++i)
+	{
+		std::string name = SavedGame::sanitizeModName(*i);
+		if (std::find(Options::mods.begin(), Options::mods.end(), std::make_pair(name, true)) == Options::mods.end())
 		{
-			std::string name = SavedGame::sanitizeModName(*i);
-			if (std::find(Options::mods.begin(), Options::mods.end(), std::make_pair(name, true)) == Options::mods.end())
+			confirm = true;
+			break;
+		}
+	}
+	if (confirm)
+	{
+		_game->pushState(new ConfirmLoadState(_origin, saveInfo.fileName));
+	}
+	else
+	{
+		_game->pushState(new LoadGameState(_origin, saveInfo.fileName, _palette));
+	}
+}
+void ListLoadState::init()
+{
+	ListGamesState::init();
+	if (_origin == OPT_MENU && Options::getLoadLastSave())
+	{
+		// make it so that this fires only once
+		Options::expendLoadLastSave();
+		// find the absolutely latest save game including quick and autos
+		time_t timestamp = 0;
+		int idx = -1, i = 0;
+		for (auto it = _saves.begin(); it !=_saves.end(); ++it, ++i)
+		{
+			if ((*it).timestamp > timestamp)
 			{
-				confirm = true;
-				break;
+				idx = i;
+				timestamp = (*it).timestamp;
 			}
 		}
-		if (confirm)
+		if (idx != -1)
 		{
-			_game->pushState(new ConfirmLoadState(_origin, saveInfo.fileName));
-		}
-		else
-		{
-			_game->pushState(new LoadGameState(_origin, saveInfo.fileName, _palette));
+			// hide the ui
+			toggleScreen();
+			hideAll();
+			loadSave(idx);
 		}
 	}
 }

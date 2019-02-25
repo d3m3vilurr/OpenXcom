@@ -40,6 +40,7 @@ class BaseDefenseState : public State
 {
 private:
 	TextButton *_btnOk;
+	TextButton *_btnStart, *_btnAbort;
 	Window *_window;
 	Text *_txtTitle, *_txtInit;
 	TextList *_lstDefenses;
@@ -55,11 +56,13 @@ public:
 	/// Cleans up the Base Defense state.
 	~BaseDefenseState();
 	/// Handle the Timer.
-	void think();
+	void think() override;
 	/// do the next step.
 	void nextStep();
 	/// Handler for clicking the OK button.
 	void btnOkClick(Action *action);
+	/// Handler for clicking the [Start] button.
+	void btnStartClick(Action *action);
 };
 
 }

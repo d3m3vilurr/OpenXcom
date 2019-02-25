@@ -74,14 +74,20 @@ namespace OpenXcom
 			add(button, "button1", "ufopaedia");
 
 			button->onMouseClick((ActionHandler)&UfopaediaStartState::btnSectionClick);
+/* FIXME
 			button->onMousePress((ActionHandler)&UfopaediaStartState::btnScrollUpClick, SDL_BUTTON_WHEELUP);
 			button->onMousePress((ActionHandler)&UfopaediaStartState::btnScrollDownClick, SDL_BUTTON_WHEELDOWN);
+*/
 
 			_btnSections.push_back(button);
 		}
 		updateButtons();
 		if (!_btnSections.empty())
-			_txtTitle->setY(_btnSections.front()->getY() - _txtTitle->getHeight());
+		{
+			int titleY = _btnSections.front()->getY() - _txtTitle->getHeight();
+			if (titleY < _window->getY()) titleY = _window->getY();
+			_txtTitle->setY(titleY);
+		}
 
 		centerAllSurfaces();
 

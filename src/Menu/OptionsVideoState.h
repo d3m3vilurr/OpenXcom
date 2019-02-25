@@ -17,6 +17,7 @@
  * You should have received a copy of the GNU General Public License
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <vector>
 #include "../Engine/State.h"
 #include "OptionsBaseState.h"
 #include <SDL.h>
@@ -52,8 +53,8 @@ private:
 	Text *_txtOptions;
 	ToggleTextButton *_btnLetterbox, *_btnLockMouse, *_btnRootWindowedMode;
 
-	SDL_Rect** _res;
-	int _resAmount, _resCurrent;
+	std::vector<SDL_DisplayMode> _res;
+	int _resCurrent;
 	std::vector<std::string> _langs, _filters;
 
 	std::string ucWords(std::string str);
@@ -88,9 +89,11 @@ public:
 	/// Handler for updating the selected geoscape scale.
 	void updateGeoscapeScale(Action *action);
 	/// Update the resolution settings, we just resized the window.
-	void resize(int &, int &);
+	void resize(int &, int &) override;
+	/// Update the game's resolution
+	void updateGameResolution();
 	/// Handles keypresses.
-	void handle(Action *action);
+	void handle(Action *action) override;
 	/// Unpresses Root Window Pos button.
 	void unpressRootWindowedMode();
 };

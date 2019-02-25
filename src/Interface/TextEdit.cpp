@@ -22,6 +22,7 @@
 #include "../Engine/Font.h"
 #include "../Engine/Timer.h"
 #include "../Engine/Options.h"
+#include "../Engine/Language.h"
 
 namespace OpenXcom
 {
@@ -34,7 +35,10 @@ namespace OpenXcom
  * @param x X position in pixels.
  * @param y Y position in pixels.
  */
-TextEdit::TextEdit(State *state, int width, int height, int x, int y) : InteractiveSurface(width, height, x, y), _blink(true), _modal(true), _char('A'), _caretPos(0), _textEditConstraint(TEC_NONE), _change(0), _state(state)
+TextEdit::TextEdit(State *state, int width, int height, int x, int y) : InteractiveSurface(width, height, x, y), _blink(true), _modal(true), _char('A'), _caretPos(0), _textEditConstraint(TEC_NONE), _change(0), _enter(0), _state(state)
+#ifdef __MOBILE__
+	, _isKeyboardActive(false)
+#endif
 {
 	_isFocused = false;
 	_text = new Text(width, height, 0, 0);
@@ -49,11 +53,16 @@ TextEdit::TextEdit(State *state, int width, int height, int x, int y) : Interact
  */
 TextEdit::~TextEdit()
 {
+	/* for good measure? */
+#ifdef __MOBILE__
+	_stopTextInput();
+#endif
 	delete _text;
 	delete _caret;
 	delete _timer;
 	// In case it was left focused
-	SDL_EnableKeyRepeat(0, SDL_DEFAULT_REPEAT_INTERVAL);
+	/* FIXME: have a look a this */
+	//SDL_EnableKeyRepeat(0, SDL_DEFAULT_REPEAT_INTERVAL);
 	_state->setModal(0);
 }
 
@@ -88,23 +97,72 @@ void TextEdit::setFocus(bool focus, bool modal)
 		InteractiveSurface::setFocus(focus);
 		if (_isFocused)
 		{
-			SDL_EnableKeyRepeat(SDL_DEFAULT_REPEAT_DELAY, SDL_DEFAULT_REPEAT_INTERVAL);
+			/* FIXME: have a look a this */
+			//SDL_EnableKeyRepeat(SDL_DEFAULT_REPEAT_DELAY, SDL_DEFAULT_REPEAT_INTERVAL);
 			_caretPos = _value.length();
 			_blink = true;
 			_timer->start();
 			if (_modal)
 				_state->setModal(this);
+#ifdef __MOBILE__
+			// Show virtual keyboard
+			/* SDL_Rect r;
+			r.x = getX();
+			r.y = getY();
+			r.w = getWidth();
+			r.h = getHeight();
+			SDL_SetTextInputRect(&r);
+			SDL_StartTextInput(); */
+			_startTextInput();
+#endif
 		}
 		else
 		{
 			_blink = false;
 			_timer->stop();
-			SDL_EnableKeyRepeat(0, SDL_DEFAULT_REPEAT_INTERVAL);
+			/* FIXME: have a look a this */
+			//SDL_EnableKeyRepeat(0, SDL_DEFAULT_REPEAT_INTERVAL);
 			if (_modal)
 				_state->setModal(0);
+#ifdef __MOBILE__
+			/* SDL_StopTextInput(); */
+			_stopTextInput();
+#endif
 		}
 	}
 }
+
+#ifdef __MOBILE__
+/**
+ * Shows keyboard on devices without physical keyboard
+ */
+void TextEdit::_startTextInput()
+{
+	if (!SDL_IsScreenKeyboardShown(NULL))
+	{
+		SDL_Rect r;
+		r.x = getX();
+		r.y = getY();
+		r.w = getWidth();
+		r.h = getHeight();
+		SDL_SetTextInputRect(&r);
+		SDL_StartTextInput();
+		_isKeyboardActive = true;
+	}
+}
+/**
+ * Hides keyboard after text is entered
+ */
+
+void TextEdit::_stopTextInput()
+{
+	if (_isKeyboardActive)
+	{
+		SDL_StopTextInput();
+		_isKeyboardActive = false;
+	}
+}
+#endif
 
 /**
  * Changes the text edit to use the big-size font.
@@ -267,7 +325,7 @@ Uint8 TextEdit::getSecondaryColor() const
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void TextEdit::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void TextEdit::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	_text->setPalette(colors, firstcolor, ncolors);
@@ -309,7 +367,18 @@ void TextEdit::draw()
 	}
 	_text->setText(Unicode::convUtf32ToUtf8(_value));
 	clear();
-	_text->blit(this);
+
+	if (_enter)
+	{
+		SDL_Rect square;
+		square.x = 0;
+		square.y = 0;
+		square.w = getWidth();
+		square.h = getHeight();
+		drawRect(&square, getColor());
+	}
+
+	_text->blit(this->getSurface());
 	if (Options::keyboardMode == KEYBOARD_ON)
 	{
 		if (_isFocused && _blink)
@@ -346,7 +415,7 @@ void TextEdit::draw()
 				break;
 			}
 			_caret->setY(y);
-			_caret->blit(this);
+			_caret->blit(this->getSurface());
 		}
 	}
 }
@@ -417,6 +486,10 @@ void TextEdit::mousePress(Action *action, State *state)
 {
 	if (action->getDetails()->button.button == SDL_BUTTON_LEFT)
 	{
+#ifdef __MOBILE__
+	/* Show keyboard */
+	_startTextInput();
+#endif
 		if (!_isFocused)
 		{
 			setFocus(true);
@@ -455,6 +528,7 @@ void TextEdit::mousePress(Action *action, State *state)
  */
 void TextEdit::keyboardPress(Action *action, State *state)
 {
+	bool enterPressed = false;
 	if (Options::keyboardMode == KEYBOARD_OFF)
 	{
 		switch (action->getDetails()->key.keysym.sym)
@@ -523,26 +597,34 @@ void TextEdit::keyboardPress(Action *action, State *state)
 				_value.erase(_caretPos, 1);
 			}
 			break;
+		case SDLK_ESCAPE:
+			{
+				_value = Unicode::convUtf8ToUtf32("");
+				_caretPos = 0;
+			}
+			[[gnu::fallthrough]];
+			// no break; do the ENTER action too
 		case SDLK_RETURN:
 		case SDLK_KP_ENTER:
-			if (!_value.empty())
+			if (!_value.empty() || _enter != 0)
 			{
+				enterPressed = true;
 				setFocus(false);
 			}
 			break;
 		default:
-			UCode c = action->getDetails()->key.keysym.unicode;
-			if (isValidChar(c) && !exceedsMaxWidth(c))
-			{
-				_value.insert(_caretPos, 1, c);
-				_caretPos++;
-			}
+			// Letter keys are handled in textInput
+			break;
 		}
 	}
 	_redraw = true;
 	if (_change)
 	{
 		(state->*_change)(action);
+	}
+	if (_enter && enterPressed)
+	{
+		(state->*_enter)(action);
 	}
 
 	InteractiveSurface::keyboardPress(action, state);
@@ -555,6 +637,42 @@ void TextEdit::keyboardPress(Action *action, State *state)
 void TextEdit::onChange(ActionHandler handler)
 {
 	_change = handler;
+}
+
+/**
+* Sets a function to be called every time ENTER is pressed.
+* @param handler Action handler.
+*/
+void TextEdit::onEnter(ActionHandler handler)
+{
+	_enter = handler;
+}
+
+void TextEdit::textInput(Action *action, State *state)
+{
+	// FIXME: This might not be consistent with current changes
+	std::string text(action->getDetails()->text.text);
+	UString wText = Unicode::convUtf8ToUtf32(text);
+	bool correct = true;
+	for(UString::iterator it = wText.begin(); it != wText.end(); ++it)
+	{
+		// FIXME: Probably not the correct check (text might be quite long?)
+		if (!isValidChar(*it) || exceedsMaxWidth(*it))
+		{
+			correct = false;
+			break;
+		}
+	}
+	if (correct)
+	{
+		_value += wText;
+		_caretPos = _value.length();
+	}
+	_redraw = true;
+	if (_change)
+	{
+		(state->*_change)(action);
+	}
 }
 
 }

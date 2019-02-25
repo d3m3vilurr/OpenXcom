@@ -31,22 +31,30 @@ namespace OpenXcom
 class AlienBase : public Target
 {
 private:
+	std::string _pactCountry;
 	std::string _race;
 	bool _inBattlescape, _discovered;
 	AlienDeployment *_deployment;
+	int _startMonth;
+	int _minutesSinceLastHuntMissionGeneration;
+	int _genMissionCount;
 public:
 	/// Creates an alien base.
-	AlienBase(AlienDeployment *deployment);
+	AlienBase(AlienDeployment *deployment, int startMonth);
 	/// Cleans up the alien base.
 	~AlienBase();
 	/// Loads the alien base from YAML.
-	void load(const YAML::Node& node);
+	void load(const YAML::Node& node) override;
 	/// Saves the alien base to YAML.
-	YAML::Node save() const;
+	YAML::Node save() const override;
 	/// Gets the alien base's type.
-	std::string getType() const;
+	std::string getType() const override;
 	/// Gets the alien base's marker sprite.
-	int getMarker() const;
+	int getMarker() const override;
+	/// Gets the alien base's pact country.
+	const std::string &getPactCountry() const;
+	/// Sets the alien base's pact country.
+	void setPactCountry(const std::string &pactCountry);
 	/// Gets the alien base's amount of active hours.
 	std::string getAlienRace() const;
 	/// Sets the alien base's alien race.
@@ -61,6 +69,18 @@ public:
 	void setDiscovered(bool discovered);
 
 	AlienDeployment *getDeployment() const;
+	void setDeployment(AlienDeployment *deployment);
+
+	/// Gets the month on which the base spawned.
+	int getStartMonth() const { return _startMonth; }
+	/// Gets the number of minutes passed since the last hunt mission was generated.
+	int getMinutesSinceLastHuntMissionGeneration() const;
+	/// Sets the number of minutes passed since the last hunt mission was generated.
+	void setMinutesSinceLastHuntMissionGeneration(int newValue);
+	/// Gets the number of genMissions generated so far by this base.
+	int getGenMissionCount() const;
+	/// Sets the number of genMissions generated so far by this base.
+	void setGenMissionCount(int newValue);
 
 };
 

@@ -17,6 +17,7 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include "UnitFallBState.h"
 #include <algorithm>
 #include "TileEngine.h"
@@ -28,6 +29,7 @@
 #include "../Savegame/Tile.h"
 #include "../Engine/Options.h"
 #include "../Mod/Armor.h"
+#include "../Mod/Mod.h"
 
 namespace OpenXcom
 {
@@ -70,77 +72,38 @@ void UnitFallBState::think()
 {
 	for (std::list<BattleUnit*>::iterator unit = _parent->getSave()->getFallingUnits()->begin(); unit != _parent->getSave()->getFallingUnits()->end();)
 	{
-		if ((*unit)->getStatus() == STATUS_TURNING)
+		// I ain't got time to panic
+		if ((*unit)->getStatus() == STATUS_TURNING || (*unit)->getStatus() == STATUS_PANICKING || (*unit)->getStatus() == STATUS_BERSERK)
 		{
 			(*unit)->abortTurn();
 		}
-		bool largeCheck = true;
 		bool falling = true;
 		int size = (*unit)->getArmor()->getSize() - 1;
-		if ((*unit)->getHealth() == 0 || (*unit)->getStunlevel() >= (*unit)->getHealth())
+		if ((*unit)->isOutThresholdExceed())
 		{
 			unit = _parent->getSave()->getFallingUnits()->erase(unit);
 			continue;
 		}
-		bool onScreen = ((*unit)->getVisible() && _parent->getMap()->getCamera()->isOnScreen((*unit)->getPosition(), true, size, false));
-		Tile *tileBelow = _parent->getSave()->getTile((*unit)->getPosition() + Position(0,0,-1));
-		for (int x = size; x >= 0; x--)
-		{
-			for (int y = size; y >= 0; y--)
-			{
-				Tile *otherTileBelow = _parent->getSave()->getTile((*unit)->getPosition() + Position(x,y,-1));
-				if (!_parent->getSave()->getTile((*unit)->getPosition() + Position(x,y,0))->hasNoFloor(otherTileBelow) || (*unit)->getMovementType() == MT_FLY)
-				{
-					largeCheck = false;
-				}
-			}
-		}
 
 		if ((*unit)->getStatus() == STATUS_WALKING || (*unit)->getStatus() == STATUS_FLYING)
 		{
-			(*unit)->keepWalking(tileBelow, true); 	// advances the phase
-			_parent->getMap()->cacheUnit(*unit);	// make sure the unit sprites are up to date
-
-			if ((*unit)->getPosition() != (*unit)->getLastPosition())
-			{
-				// Reset tiles moved from.
-				for (int x = size; x >= 0; x--)
-				{
-					for (int y = size; y >= 0; y--)
-					{
-						// A falling unit might have already taken up this position so check that this unit is still here.
-						if (_parent->getSave()->getTile((*unit)->getLastPosition() + Position(x,y,0))->getUnit() == (*unit))
-						{
-							_parent->getSave()->getTile((*unit)->getLastPosition() + Position(x,y,0))->setUnit(0);
-						}
-					}
-				}
-				// Update tiles moved to.
-				for (int x = size; x >= 0; x--)
-				{
-					for (int y = size; y >= 0; y--)
-					{
-						_parent->getSave()->getTile((*unit)->getPosition() + Position(x,y,0))->setUnit((*unit), _parent->getSave()->getTile((*unit)->getPosition() + Position(x,y,-1)));
-					}
-				}
-			}
+			(*unit)->keepWalking(_parent->getSave(), true); // advances the phase
 
 			++unit;
 			continue;
 		}
 
-		falling = largeCheck
+		falling = (*unit)->haveNoFloorBelow()
 			&& (*unit)->getPosition().z != 0
-			&& (*unit)->getTile()->hasNoFloor(tileBelow)
 			&& (*unit)->getMovementType() != MT_FLY
 			&& (*unit)->getWalkingPhase() == 0;
 
 		if (falling)
 		{
 			// Tile(s) unit is falling into.
-			for (int x = (*unit)->getArmor()->getSize() - 1; x >= 0; --x)
+			for (int x = size; x >= 0; --x)
 			{
-				for (int y = (*unit)->getArmor()->getSize() - 1; y >= 0; --y)
+				for (int y = size; y >= 0; --y)
 				{
 					Tile *tileTarget = _parent->getSave()->getTile((*unit)->getPosition() + Position(x,y,-1));
 					tilesToFallInto.push_back(tileTarget);
@@ -160,22 +123,13 @@ void UnitFallBState::think()
 			}
 		}
 
-		falling = largeCheck
-			&& (*unit)->getPosition().z != 0
-			&& (*unit)->getTile()->hasNoFloor(tileBelow)
-			&& (*unit)->getMovementType() != MT_FLY
-			&& (*unit)->getWalkingPhase() == 0;
-
 		// we are just standing around, we are done falling.
 		if ((*unit)->getStatus() == STATUS_STANDING)
 		{
 			if (falling)
 			{
 				Position destination = (*unit)->getPosition() + Position(0,0,-1);
-				Tile *tileDest = _parent->getSave()->getTile(destination);
-				(*unit)->startWalking(Pathfinding::DIR_DOWN, destination, tileDest, onScreen);
-				(*unit)->setCache(0);
-				_parent->getMap()->cacheUnit(*unit);
+				(*unit)->startWalking(Pathfinding::DIR_DOWN, destination, _parent->getSave());
 				++unit;
 			}
 			else
@@ -184,8 +138,8 @@ void UnitFallBState::think()
 				if ((*unit)->getSpecialAbility() == SPECAB_BURNFLOOR || (*unit)->getSpecialAbility() == SPECAB_BURN_AND_EXPLODE)
 				{
 					(*unit)->getTile()->ignite(1);
-					Position groundVoxel = ((*unit)->getPosition() * Position(16,16,24)) + Position(8,8,-((*unit)->getTile()->getTerrainLevel()));
-					_parent->getTileEngine()->hit(groundVoxel, (*unit)->getBaseStats()->strength, DT_IN, (*unit));
+					Position groundVoxel = ((*unit)->getPosition().toVoxel()) + Position(8,8,-((*unit)->getTile()->getTerrainLevel()));
+					_parent->getTileEngine()->hit(BattleActionAttack{ BA_NONE, (*unit), }, groundVoxel, (*unit)->getBaseStats()->strength, _parent->getMod()->getDamageType(DT_IN), false);
 
 					if ((*unit)->getStatus() != STATUS_STANDING) // ie: we burned a hole in the floor and fell through it
 					{
@@ -193,14 +147,16 @@ void UnitFallBState::think()
 					}
 				}
 				// move our personal lighting with us
-				_terrain->calculateUnitLighting();
-				_parent->getMap()->cacheUnit(*unit);
-				(*unit)->setCache(0);
-				_terrain->calculateFOV(*unit);
-				_parent->checkForProximityGrenades(*unit);
+				auto change = _parent->checkForProximityGrenades(*unit);
+				_terrain->calculateLighting(change ? LL_ITEMS : LL_UNITS, (*unit)->getPosition(), 2);
+				_terrain->calculateFOV((*unit)->getPosition(), 2, false); //update everyone else to see this unit, as well as all this unit's visible units.
+				_terrain->calculateFOV((*unit), true, false); //update tiles
 				if ((*unit)->getStatus() == STATUS_STANDING)
 				{
-					if (_parent->getTileEngine()->checkReactionFire(*unit))
+					BattleAction fall;
+					fall.type = BA_WALK;
+					fall.actor = *unit;
+					if (_parent->getTileEngine()->checkReactionFire(*unit, fall))
 						_parent->getPathfinding()->abortPath();
 					unit = _parent->getSave()->getFallingUnits()->erase(unit);
 				}
@@ -212,12 +168,11 @@ void UnitFallBState::think()
 		}
 	}
 
-
 	// Find somewhere to move the unit(s) In danger of being squashed.
 	if (!unitsToMove.empty())
 	{
 		std::vector<Tile*> escapeTiles;
-		for (std::vector<BattleUnit*>::iterator ub = unitsToMove.begin(); ub < unitsToMove.end(); )
+		for (auto ub = unitsToMove.begin(); ub < unitsToMove.end(); )
 		{
 			BattleUnit *unitBelow = (*ub);
 			bool escapeFound = false;
@@ -244,13 +199,12 @@ void UnitFallBState::think()
 					Position originalPosition = (*bs);
 					Position endPosition = originalPosition + offset;
 					Tile *t = _parent->getSave()->getTile(endPosition);
-					Tile *bt = _parent->getSave()->getTile(endPosition + Position(0,0,-1));
 
 					bool aboutToBeOccupiedFromAbove = t && std::find(tilesToFallInto.begin(), tilesToFallInto.end(), t) != tilesToFallInto.end();
 					bool alreadyTaken = t && std::find(escapeTiles.begin(), escapeTiles.end(), t) != escapeTiles.end();
 					bool alreadyOccupied = t && t->getUnit() && (t->getUnit() != unitBelow);
 					bool movementBlocked = _parent->getSave()->getPathfinding()->getTUCost(originalPosition, dir, &endPosition, *ub, 0, false) == 255;
-					bool hasFloor = t && !t->hasNoFloor(bt);
+					bool hasFloor = t && !t->hasNoFloor(_parent->getSave());
 					bool unitCanFly = unitBelow->getMovementType() == MT_FLY;
 
 					bool canMoveToTile = t && !alreadyOccupied && !alreadyTaken && !aboutToBeOccupiedFromAbove && !movementBlocked && (hasFloor || unitCanFly);
@@ -281,9 +235,7 @@ void UnitFallBState::think()
 								}
 							}
 
-							Tile *bu = _parent->getSave()->getTile(originalPosition + Position(0,0,-1));
-							unitBelow->startWalking(dir, unitBelow->getPosition() + offset, bu,
-								(unitBelow->getVisible() && _parent->getMap()->getCamera()->isOnScreen(unitBelow->getPosition(), true, unitBelow->getArmor()->getSize() - 1, false)));
+							unitBelow->startWalking(dir, unitBelow->getPosition() + offset, _parent->getSave());
 							ub = unitsToMove.erase(ub);
 						}
 					}
@@ -296,7 +248,7 @@ void UnitFallBState::think()
 				ub = unitsToMove.erase(ub);
 			}
 		}
-		_parent->checkForCasualties(0,0);
+		_parent->checkForCasualties(nullptr, BattleActionAttack{ BA_NONE, nullptr });
 	}
 
 	if (_parent->getSave()->getFallingUnits()->empty())

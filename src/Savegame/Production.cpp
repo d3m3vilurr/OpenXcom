@@ -18,14 +18,21 @@
  */
 #include "Production.h"
 #include <algorithm>
+#include "../Engine/Collections.h"
 #include "../Mod/RuleManufacture.h"
+#include "../Mod/RuleSoldier.h"
 #include "Base.h"
 #include "SavedGame.h"
+#include "Transfer.h"
 #include "ItemContainer.h"
+#include "Soldier.h"
 #include "Craft.h"
 #include "../Mod/Mod.h"
 #include "../Mod/RuleItem.h"
 #include "../Mod/RuleCraft.h"
+#include "../Engine/Language.h"
+#include "../Engine/Options.h"
+#include "../Engine/RNG.h"
 #include <climits>
 #include "BaseFacility.h"
 
@@ -90,19 +97,35 @@ bool Production::haveEnoughMoneyForOneMoreUnit(SavedGame * g) const
 	return (g->getFunds() >= _rules->getManufactureCost());
 }
 
+bool Production::haveEnoughLivingSpaceForOneMoreUnit(Base * b)
+{
+	if (_rules->getSpawnedPersonType() != "")
+	{
+		// Note: if the production is running then the space we need is already counted by getUsedQuarters
+		if (b->getAvailableQuarters() < b->getUsedQuarters())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 bool Production::haveEnoughMaterialsForOneMoreUnit(Base * b, const Mod *m) const
 {
-	for (std::map<std::string, int>::const_iterator iter = _rules->getRequiredItems().begin(); iter != _rules->getRequiredItems().end(); ++iter)
+	for (auto& i : _rules->getRequiredItems())
 	{
-		if (m->getItem(iter->first) != 0 && b->getStorageItems()->getItem(iter->first) < iter->second)
+		if (b->getStorageItems()->getItem(i.first->getType()) < i.second)
 			return false;
-		else if (m->getCraft(iter->first) != 0 && b->getCraftCount(iter->first) < iter->second)
+	}
+	for (auto& i : _rules->getRequiredCrafts())
+	{
+		if (b->getCraftCountForProduction(i.first) < i.second)
 			return false;
 	}
 	return true;
 }
 
-productionProgress_e Production::step(Base * b, SavedGame * g, const Mod *m)
+productionProgress_e Production::step(Base * b, SavedGame * g, const Mod *m, Language *lang)
 {
 	int done = getAmountProduced();
 	_timeSpent += _engineers;
@@ -121,28 +144,94 @@ productionProgress_e Production::step(Base * b, SavedGame * g, const Mod *m)
 		int count = 0;
 		do
 		{
-			for (std::map<std::string,int>::const_iterator i = _rules->getProducedItems().begin(); i != _rules->getProducedItems().end(); ++i)
+			auto ruleCraft = _rules->getProducedCraft();
+			if (ruleCraft)
 			{
-				if (_rules->getCategory() == "STR_CRAFT")
+				Craft *craft = new Craft(ruleCraft, b, g->getId(ruleCraft->getType()));
+				craft->setStatus("STR_REFUELLING");
+				b->getCrafts()->push_back(craft);
+			}
+			else
+			{
+				for (auto& i : _rules->getProducedItems())
 				{
-					Craft *craft = new Craft(m->getCraft(i->first, true), b, g->getId(i->first));
-					craft->setStatus("STR_REFUELLING");
-					b->getCrafts()->push_back(craft);
-					break;
+					if (getSellItems())
+						g->setFunds(g->getFunds() + (i.first->getSellCost() * i.second));
+					else
+					{
+						b->getStorageItems()->addItem(i.first->getType(), i.second);
+						if (i.first->getBattleType() == BT_NONE)
+						{
+							for (std::vector<Craft*>::iterator c = b->getCrafts()->begin(); c != b->getCrafts()->end(); ++c)
+							{
+								(*c)->reuseItem(i.first->getType());
+							}
+						}
+					}
+				}
+			}
+			// Random manufacture
+			if (!_rules->getRandomProducedItems().empty())
+			{
+				int totalWeight = 0;
+				for (auto& itemSet : _rules->getRandomProducedItems())
+				{
+					totalWeight += itemSet.first;
+				}
+				// RNG
+				int roll = RNG::generate(1, totalWeight);
+				int runningTotal = 0;
+				for (auto& itemSet : _rules->getRandomProducedItems())
+				{
+					runningTotal += itemSet.first;
+					if (runningTotal >= roll)
+					{
+						for (auto& i : itemSet.second)
+						{
+							b->getStorageItems()->addItem(i.first->getType(), i.second);
+							if (i.first->getBattleType() == BT_NONE)
+							{
+								for (std::vector<Craft*>::iterator c = b->getCrafts()->begin(); c != b->getCrafts()->end(); ++c)
+								{
+									(*c)->reuseItem(i.first->getType());
+								}
+							}
+						}
+						// break outer loop
+						break;
+					}
+				}
+			}
+			// Spawn persons (soldiers, engineers, scientists, ...)
+			const std::string &spawnedPersonType = _rules->getSpawnedPersonType();
+			if (spawnedPersonType != "")
+			{
+				if (spawnedPersonType == "STR_SCIENTIST")
+				{
+					Transfer *t = new Transfer(24);
+					t->setScientists(1);
+					b->getTransfers()->push_back(t);
+				}
+				else if (spawnedPersonType == "STR_ENGINEER")
+				{
+					Transfer *t = new Transfer(24);
+					t->setEngineers(1);
+					b->getTransfers()->push_back(t);
 				}
 				else
 				{
-					if (m->getItem(i->first, true)->getBattleType() == BT_NONE)
+					RuleSoldier *rule = m->getSoldier(spawnedPersonType);
+					if (rule != 0)
 					{
-						for (std::vector<Craft*>::iterator c = b->getCrafts()->begin(); c != b->getCrafts()->end(); ++c)
+						Transfer *t = new Transfer(24);
+						Soldier *s = m->genSoldier(g, rule->getType());
+						if (_rules->getSpawnedPersonName() != "")
 						{
-							(*c)->reuseItem(i->first);
+							s->setName(lang->getString(_rules->getSpawnedPersonName()));
 						}
+						t->setSoldier(s);
+						b->getTransfers()->push_back(t);
 					}
-					if (getSellItems())
-						g->setFunds(g->getFunds() + (m->getItem(i->first, true)->getSellCost() * i->second));
-					else
-						b->getStorageItems()->addItem(i->first, i->second);
 				}
 			}
 			count++;
@@ -161,6 +250,7 @@ productionProgress_e Production::step(Base * b, SavedGame * g, const Mod *m)
 	{
 		// We need to ensure that player has enough cash/item to produce a new unit
 		if (!haveEnoughMoneyForOneMoreUnit(g)) return PROGRESS_NOT_ENOUGH_MONEY;
+		if (!haveEnoughLivingSpaceForOneMoreUnit(b)) return PROGRESS_NOT_ENOUGH_LIVING_SPACE;
 		if (!haveEnoughMaterialsForOneMoreUnit(b, m)) return PROGRESS_NOT_ENOUGH_MATERIALS;
 		startItem(b, g, m);
 	}
@@ -183,39 +273,53 @@ const RuleManufacture * Production::getRules() const
 void Production::startItem(Base * b, SavedGame * g, const Mod *m) const
 {
 	g->setFunds(g->getFunds() - _rules->getManufactureCost());
-	for (std::map<std::string,int>::const_iterator iter = _rules->getRequiredItems().begin(); iter != _rules->getRequiredItems().end(); ++iter)
+	for (auto& i : _rules->getRequiredItems())
 	{
-		if (m->getItem(iter->first) != 0)
-		{
-			b->getStorageItems()->removeItem(iter->first, iter->second);
-		}
-		else if (m->getCraft(iter->first) != 0)
-		{
-			// Find suitable craft
-			for (std::vector<Craft*>::iterator c = b->getCrafts()->begin(); c != b->getCrafts()->end(); ++c)
+		b->getStorageItems()->removeItem(i.first->getType(), i.second);
+	}
+	for (auto& i : _rules->getRequiredCrafts())
+	{
+		// Find suitable craft
+		Collections::deleteIf(*b->getCrafts(), i.second,
+			[&](Craft* craft)
 			{
-				if ((*c)->getRules()->getType() == iter->first)
+				if (craft->getRules() == i.first)
 				{
 					// Unload craft
-					(*c)->unload(m);
+					craft->unload(m);
 
 					// Clear hangar
 					for (std::vector<BaseFacility*>::iterator f = b->getFacilities()->begin(); f != b->getFacilities()->end(); ++f)
 					{
-						if ((*f)->getCraft() == (*c))
+						if ((*f)->getCraftForDrawing() == craft)
 						{
-							(*f)->setCraft(0);
+							(*f)->setCraftForDrawing(0);
 							break;
 						}
 					}
 
-					// Remove craft
-					b->getCrafts()->erase(c);
-					break;
+					return true;
+				}
+				else
+				{
+					return false;
 				}
 			}
-		}
+		);
 	}
+}
+
+void Production::refundItem(Base * b, SavedGame * g, const Mod *m) const
+{
+	g->setFunds(g->getFunds() + _rules->getManufactureCost());
+	for (auto& iter : _rules->getRequiredItems())
+	{
+		b->getStorageItems()->addItem(iter.first->getType(), iter.second);
+	}
+	//for (auto& iter : _rules->getRequiredCrafts())
+	//{
+	//	// not supported
+	//}
 }
 
 YAML::Node Production::save() const

@@ -25,6 +25,7 @@
 #include "Language.h"
 #include "LocalizedText.h"
 #include "Palette.h"
+#include "../Engine/Sound.h"
 #include "../Mod/Mod.h"
 #include "../Interface/Window.h"
 #include "../Interface/TextButton.h"
@@ -48,7 +49,7 @@ Game* State::_game = 0;
  * By default states are full-screen.
  * @param game Pointer to the core game.
  */
-State::State() : _screen(true), _modal(0), _ruleInterface(0), _ruleInterfaceParent(0)
+State::State() : _screen(true), _soundPlayed(false), _modal(0), _ruleInterface(0), _ruleInterfaceParent(0)
 {
 	// initialize palette to all black
 	memset(_palette, 0, sizeof(_palette));
@@ -119,6 +120,18 @@ void State::setInterface(const std::string& category, bool alterPal, SavedBattle
 }
 
 /**
+ * Set window background from the ruleset.
+ * @param window Window handle.
+ * @param s ID of the interface ruleset entry.
+ */
+void State::setWindowBackground(Window *window, const std::string &s)
+{
+	auto bgImageName = _game->getMod()->getInterface(s)->getBackgroundImage();
+	auto bgImage = _game->getMod()->getSurface(bgImageName);
+	window->setBackground(bgImage);
+}
+
+/**
  * Adds a new child surface for the state to take care of,
  * giving it the game's display palette. Once associated,
  * the state handles all of the surface's behaviour
@@ -175,7 +188,11 @@ void State::add(Surface *surface, const std::string &id, const std::string &cate
 				surface->setY(parent->getY() + element->y);
 			}
 
-			surface->setTFTDMode(element->TFTDMode);
+			auto inter = dynamic_cast<InteractiveSurface*>(surface);
+			if (inter)
+			{
+				inter->setTFTDMode(element->TFTDMode);
+			}
 
 			if (element->color != INT_MAX)
 			{
@@ -261,6 +278,14 @@ void State::init()
 	if (_ruleInterface != 0 && !_ruleInterface->getMusic().empty())
 	{
 		_game->getMod()->playMusic(_ruleInterface->getMusic());
+	}
+	if (_ruleInterface != 0 && _ruleInterface->getSound() > -1)
+	{
+		if (!_soundPlayed)
+		{
+			_game->getMod()->getSound("GEO.CAT", _ruleInterface->getSound())->play();
+			_soundPlayed = true;
+		}
 	}
 }
 
@@ -350,6 +375,25 @@ void State::resetAll()
 const LocalizedText &State::tr(const std::string &id) const
 {
 	return _game->getLanguage()->getString(id);
+}
+
+/**
+* Get the localized text from dictionary.
+* This function forwards the call to Language::getString(const std::string &).
+* @param id The (prefix of) dictionary key to search for.
+* @param alt Used to construct the (suffix of) dictionary key to search for.
+* @return A reference to the localized text.
+*/
+const LocalizedText &State::trAlt(const std::string &id, int alt) const
+{
+	std::ostringstream ss;
+	ss << id;
+	// alt = 0 is the original, alt > 0 are the alternatives
+	if (alt > 0)
+	{
+		ss << "_" << alt;
+	}
+	return _game->getLanguage()->getString(ss.str());
 }
 
 /**
@@ -464,7 +508,7 @@ void State::setModal(InteractiveSurface *surface)
  * @param ncolors Amount of colors to replace.
  * @param immediately Apply changes immediately, otherwise wait in case of multiple setPalettes.
  */
-void State::setPalette(SDL_Color *colors, int firstcolor, int ncolors, bool immediately)
+void State::setPalette(const SDL_Color *colors, int firstcolor, int ncolors, bool immediately)
 {
 	if (colors)
 	{
@@ -517,6 +561,18 @@ void State::setPalette(const std::string &palette, int backpals)
 }
 
 /**
+* Loads palettes from the given resources into the state.
+* @param colors Pointer to the set of colors.
+* @param cursorColor Cursor color to use.
+*/
+void State::setCustomPalette(SDL_Color *colors, int cursorColor)
+{
+	setPalette(colors, 0, 256, false);
+	_cursorColor = cursorColor;
+	setPalette(NULL); // delay actual update to the end
+}
+
+/**
  * Returns the state's 8bpp palette.
  * @return Pointer to the palette's colors.
  */
@@ -553,6 +609,11 @@ void State::recenter(int dX, int dY)
 void State::setGamePtr(Game* game)
 {
 	_game = game;
+}
+
+Game* State::getGame()
+{
+	return _game;
 }
 
 }

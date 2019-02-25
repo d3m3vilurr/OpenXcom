@@ -34,6 +34,7 @@
 #include "../Savegame/SavedGame.h"
 #include "../Savegame/SavedBattleGame.h"
 #include "../Savegame/BattleUnitStatistics.h"
+#include "TileEngine.h"
 
 namespace OpenXcom
 {
@@ -119,7 +120,7 @@ MedikitButton::MedikitButton(int y) : InteractiveSurface(30, 20, 190, y)
  * @param targetUnit The wounded unit.
  * @param action The healing action.
  */
-MedikitState::MedikitState (BattleUnit *targetUnit, BattleAction *action) : _targetUnit(targetUnit), _action(action), _revivedTarget(false)
+MedikitState::MedikitState (BattleUnit *targetUnit, BattleAction *action, TileEngine *tile) : _targetUnit(targetUnit), _action(action), _tileEngine(tile), _revivedTarget(false)
 {
 	if (Options::maximizeInfoScreens)
 	{
@@ -128,8 +129,6 @@ MedikitState::MedikitState (BattleUnit *targetUnit, BattleAction *action) : _tar
 		_game->getScreen()->resetDisplay(false);
 	}
 
-	_tu = action->TU;
-	_unit = action->actor;
 	_item = action->weapon;
 	_bg = new Surface(320, 200);
 
@@ -168,7 +167,17 @@ MedikitState::MedikitState (BattleUnit *targetUnit, BattleAction *action) : _tar
 
 	centerAllSurfaces();
 
-	_game->getMod()->getSurface("MEDIBORD.PCK")->blit(_bg);
+	Surface *backgroundSprite = 0;
+	if (!_item->getRules()->getMediKitCustomBackground().empty())
+	{
+		backgroundSprite = _game->getMod()->getSurface(_item->getRules()->getMediKitCustomBackground(), false);
+	}
+	if (!backgroundSprite)
+	{
+		backgroundSprite = _game->getMod()->getSurface("MEDIBORD.PCK");
+	}
+
+	backgroundSprite->blitNShade(_bg, 0, 0);
 	_pkText->setBig();
 	_stimulantTxt->setBig();
 	_healTxt->setBig();
@@ -207,6 +216,7 @@ void MedikitState::onEndClick(Action *)
 		_game->getScreen()->resetDisplay(false);
 	}
 	_game->popState();
+	_tileEngine->medikitRemoveIfEmpty(_action);
 }
 
 /**
@@ -215,25 +225,23 @@ void MedikitState::onEndClick(Action *)
  */
 void MedikitState::onHealClick(Action *)
 {
-	int heal = _item->getHealQuantity();
-	RuleItem *rule = _item->getRules();
-	if (heal == 0)
+	if (_item->getHealQuantity() == 0)
 	{
 		return;
 	}
-	if (_unit->spendTimeUnits(_tu))
+
+	if (_action->spendTU(&_action->result))
 	{
-		_targetUnit->heal(_medikitView->getSelectedPart(), rule->getWoundRecovery(), rule->getHealthRecovery());
-		_item->setHealQuantity(--heal);
+		_tileEngine->medikitHeal(_action, _targetUnit, _medikitView->getSelectedPart());
 		_medikitView->updateSelectedPart();
 		_medikitView->invalidate();
+		_action->actor->getStatistics()->woundsHealed++;
 		update();
 
-		if (_targetUnit->getStatus() == STATUS_UNCONSCIOUS && _targetUnit->getStunlevel() < _targetUnit->getHealth() && _targetUnit->getHealth() > 0)
+		if (_targetUnit->getStatus() == STATUS_UNCONSCIOUS && !_targetUnit->isOutThresholdExceed())
 		{
 			if (!_revivedTarget)
 			{
-				_targetUnit->setTimeUnits(0);
 				if(_targetUnit->getOriginalFaction() == FACTION_PLAYER)
 				{
 					_action->actor->getStatistics()->revivedSoldier++;
@@ -254,11 +262,9 @@ void MedikitState::onHealClick(Action *)
 				onEndClick(0);
 			}
 		}
-		_unit->getStatistics()->woundsHealed++;
 	}
 	else
 	{
-		_action->result = "STR_NOT_ENOUGH_TIME_UNITS";
 		onEndClick(0);
 	}
 }
@@ -269,23 +275,20 @@ void MedikitState::onHealClick(Action *)
  */
 void MedikitState::onStimulantClick(Action *)
 {
-	int stimulant = _item->getStimulantQuantity();
-	RuleItem *rule = _item->getRules();
-	if (stimulant == 0)
+	if (_item->getStimulantQuantity() == 0)
 	{
 		return;
 	}
-	if (_unit->spendTimeUnits (_tu))
+
+	if (_action->spendTU(&_action->result))
 	{
-		_targetUnit->stimulant(rule->getEnergyRecovery(), rule->getStunRecovery());
-		_item->setStimulantQuantity(--stimulant);
+		_tileEngine->medikitStimulant(_action, _targetUnit);
 		_action->actor->getStatistics()->appliedStimulant++;
 		update();
 
 		// if the unit has revived we quit this screen automatically
-		if (_targetUnit->getStatus() == STATUS_UNCONSCIOUS && _targetUnit->getStunlevel() < _targetUnit->getHealth() && _targetUnit->getHealth() > 0)
+		if (_targetUnit->getStatus() == STATUS_UNCONSCIOUS && !_targetUnit->isOutThresholdExceed())
 		{
-			_targetUnit->setTimeUnits(0);
 			if(_targetUnit->getOriginalFaction() == FACTION_PLAYER)
 			{
 				_action->actor->getStatistics()->revivedSoldier++;
@@ -303,7 +306,6 @@ void MedikitState::onStimulantClick(Action *)
 	}
 	else
 	{
-		_action->result = "STR_NOT_ENOUGH_TIME_UNITS";
 		onEndClick(0);
 	}
 }
@@ -314,21 +316,19 @@ void MedikitState::onStimulantClick(Action *)
  */
 void MedikitState::onPainKillerClick(Action *)
 {
-	int pk = _item->getPainKillerQuantity();
-	if (pk == 0)
+	if (_item->getPainKillerQuantity() == 0)
 	{
 		return;
 	}
-	if (_unit->spendTimeUnits (_tu))
+
+	if (_action->spendTU(&_action->result))
 	{
-		_targetUnit->painKillers();
-		_item->setPainKillerQuantity(--pk);
+		_tileEngine->medikitPainKiller(_action, _targetUnit);
 		_action->actor->getStatistics()->appliedPainKill++;
 		update();
 	}
 	else
 	{
-		_action->result = "STR_NOT_ENOUGH_TIME_UNITS";
 		onEndClick(0);
 	}
 }

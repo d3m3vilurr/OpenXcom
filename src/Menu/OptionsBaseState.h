@@ -44,6 +44,9 @@ protected:
 	OptionsOrigin _origin;
 	Window *_window;
 	TextButton *_btnVideo, *_btnAudio, *_btnControls, *_btnGeoscape, *_btnBattlescape, *_btnAdvanced, *_btnMods;
+#if defined (__MOBILE__) || defined (__PSEUDO_ANDROID__)
+	TextButton *_btnSystem;
+#endif
 	TextButton *_btnOk, *_btnCancel, *_btnDefault;
 	Text *_txtTooltip;
 	std::string _currentTooltip;
@@ -56,7 +59,7 @@ public:
 	/// Restarts the game states.
 	static void restart(OptionsOrigin origin);
 	/// Initializes palettes.
-	void init();
+	void init() override;
 	/// Presses a certain category button.
 	void setCategory(TextButton *button);
 	/// Handler for clicking the OK button.
@@ -72,7 +75,7 @@ public:
 	/// Handler for hiding tooltip.
 	void txtTooltipOut(Action *action);
 	/// Update the resolution settings, we just resized the window.
-	void resize(int &dX, int &dY);
+	void resize(int &dX, int &dY) override;
 };
 
 }

@@ -30,6 +30,7 @@
 #include "SerializationHelper.h"
 #include "../Battlescape/Particle.h"
 #include "../fmath.h"
+#include "SavedBattleGame.h"
 
 namespace OpenXcom
 {
@@ -58,10 +59,9 @@ Tile::Tile(Position pos): _smoke(0), _fire(0), _explosive(0), _explosiveType(0),
 		_mapDataSetID[i] = -1;
 		_currentFrame[i] = 0;
 	}
-	for (int layer = 0; layer < LIGHTLAYERS; layer++)
+	for (int layer = 0; layer < LL_MAX; layer++)
 	{
 		_light[layer] = 0;
-		_lastLight[layer] = -1;
 	}
 	for (int i = 0; i < 3; ++i)
 	{
@@ -220,6 +220,7 @@ void Tile::setMapData(MapData *dat, int mapDataID, int mapDataSetID, TilePart pa
 	_objects[part] = dat;
 	_mapDataID[part] = mapDataID;
 	_mapDataSetID[part] = mapDataSetID;
+	updateSprite(part);
 }
 
 /**
@@ -266,13 +267,17 @@ int Tile::getTUCost(int part, MovementType movementType) const
 
 /**
  * Whether this tile has a floor or not. If no object defined as floor, it has no floor.
- * @param tileBelow
+ * @param savedBattleGame Save to get tile below to check if it can work as floor.
  * @return bool
  */
-bool Tile::hasNoFloor(Tile *tileBelow) const
+bool Tile::hasNoFloor(const SavedBattleGame *savedBattleGame) const
 {
-	if (tileBelow != 0 && tileBelow->getTerrainLevel() == -24)
-		return false;
+	if (_pos.z > 0 && savedBattleGame)
+	{
+		const Tile* tileBelow = savedBattleGame->getBelowTile(this);
+		if (tileBelow != 0 && tileBelow->getTerrainLevel() == -24)
+			return false;
+	}
 	if (_objects[O_FLOOR])
 		return _objects[O_FLOOR]->isNoFloor();
 	else
@@ -339,9 +344,18 @@ int Tile::openDoor(TilePart part, BattleUnit *unit, BattleActionType reserve)
 {
 	if (!_objects[part]) return -1;
 
+	BattleActionCost cost;
+	if (unit)
+	{
+		int tuCost = _objects[part]->getTUCost(unit->getMovementType());
+		cost = BattleActionCost(reserve, unit, unit->getMainHandWeapon(false));
+		cost.Time += tuCost;
+		cost.Energy += tuCost / 2;
+	}
+
 	if (_objects[part]->isDoor() && unit->getArmor()->getSize() == 1) // don't allow double-wide units to open swinging doors due to engine limitations
 	{
-		if (unit && unit->getTimeUnits() < _objects[part]->getTUCost(unit->getMovementType()) + unit->getActionTUs(reserve, unit->getMainHandWeapon(false)))
+		if (unit && cost.Time && !cost.haveTU())
 			return 4;
 		if (_unit && _unit != unit && _unit->getPosition() != getPosition())
 			return -1;
@@ -352,9 +366,10 @@ int Tile::openDoor(TilePart part, BattleUnit *unit, BattleActionType reserve)
 	}
 	if (_objects[part]->isUFODoor() && _currentFrame[part] == 0) // ufo door part 0 - door is closed
 	{
-		if (unit &&	unit->getTimeUnits() < _objects[part]->getTUCost(unit->getMovementType()) + unit->getActionTUs(reserve, unit->getMainHandWeapon(false)))
+		if (unit && cost.Time && !cost.haveTU())
 			return 4;
 		_currentFrame[part] = 1; // start opening door
+		updateSprite((TilePart)part);
 		return 1;
 	}
 	if (_objects[part]->isUFODoor() && _currentFrame[part] != 7) // ufo door != part 7 - door is still opening
@@ -374,6 +389,7 @@ int Tile::closeUfoDoor()
 		{
 			_currentFrame[part] = 0;
 			retval = 1;
+			updateSprite((TilePart)part);
 		}
 	}
 
@@ -395,11 +411,6 @@ void Tile::setDiscovered(bool flag, int part)
 			_discovered[0] = true;
 			_discovered[1] = true;
 		}
-		// if light on tile changes, units and objects on it change light too
-		if (_unit != 0)
-		{
-			_unit->setCache(0);
-		}
 	}
 }
 
@@ -418,10 +429,21 @@ bool Tile::isDiscovered(int part) const
  * Reset the light amount on the tile. This is done before a light level recalculation.
  * @param layer Light is separated in 3 layers: Ambient, Static and Dynamic.
  */
-void Tile::resetLight(int layer)
+void Tile::resetLight(LightLayers layer)
 {
 	_light[layer] = 0;
-	_lastLight[layer] = _light[layer];
+}
+
+/**
+ * Reset multiple layers of light from defined one.
+ * @param layer From with layer start reset.
+ */
+void Tile::resetLightMulti(LightLayers layer)
+{
+	for (int l = layer; l < LL_MAX; l++)
+	{
+		_light[l] = 0;
+	}
 }
 
 /**
@@ -429,11 +451,35 @@ void Tile::resetLight(int layer)
  * @param light Amount of light to add.
  * @param layer Light is separated in 3 layers: Ambient, Static and Dynamic.
  */
-void Tile::addLight(int light, int layer)
+void Tile::addLight(int light, LightLayers layer)
 {
 	if (_light[layer] < light)
 		_light[layer] = light;
 }
+
+/**
+ * Get current light amount of the tile.
+ * @param layer Light is separated in 3 layers: Ambient, Static and Dynamic.
+ * @return Max light value of selected layer.
+ */
+int Tile::getLight(LightLayers layer) const
+{
+	return _light[layer];
+}
+
+int Tile::getLightMulti(LightLayers layer) const
+{
+	int light = 0;
+
+	for (int l = layer; l >= 0; --l)
+	{
+		if (_light[l] > light)
+			light = _light[l];
+	}
+
+	return light;
+}
+
 
 /**
  * Gets the tile's shade amount 0-15. It returns the brightest of all light layers.
@@ -444,7 +490,7 @@ int Tile::getShade() const
 {
 	int light = 0;
 
-	for (int layer = 0; layer < LIGHTLAYERS; layer++)
+	for (int layer = 0; layer < LL_MAX; layer++)
 	{
 		if (_light[layer] > light)
 			light = _light[layer];
@@ -624,7 +670,7 @@ void Tile::ignite(int power)
 void Tile::animate()
 {
 	int newframe;
-	for (int i=0; i < 4; ++i)
+	for (int i = O_FLOOR; i < O_MAX; ++i)
 	{
 		if (_objects[i])
 		{
@@ -643,6 +689,7 @@ void Tile::animate()
 			}
 			_currentFrame[i] = newframe;
 		}
+		updateSprite((TilePart)i);
 	}
 	for (std::list<Particle*>::iterator i = _particles.begin(); i != _particles.end();)
 	{
@@ -659,30 +706,38 @@ void Tile::animate()
 }
 
 /**
- * Get the sprite of a certain part of the tile.
- * @param part
- * @return Pointer to the sprite.
+ * Update cached value of sprite.
  */
-Surface *Tile::getSprite(int part) const
+void Tile::updateSprite(TilePart part)
 {
-	if (_objects[part] == 0)
-		return 0;
-
-	return _objects[part]->getDataset()->getSurfaceset()->getFrame(_objects[part]->getSprite(_currentFrame[part]));
+	if (_objects[part])
+	{
+		_currentSurface[part] = _objects[part]->getDataset()->getSurfaceset()->getFrame(_objects[part]->getSprite(_currentFrame[part]));
+	}
+	else
+	{
+		_currentSurface[part] = nullptr;
+	}
 }
 
 /**
- * Set a unit on this tile.
- * @param unit
- * @param tileBelow
+ * Get unit from this tile or from tile below if unit poke out.
+ * @param saveBattleGame
+ * @return BattleUnit.
  */
-void Tile::setUnit(BattleUnit *unit, Tile *tileBelow)
+BattleUnit *Tile::getOverlappingUnit(const SavedBattleGame *saveBattleGame, TileUnitOverlapping range) const
 {
-	if (unit != 0)
+	auto bu = getUnit();
+	if (!bu && _pos.z > 0 && hasNoFloor(saveBattleGame))
 	{
-		unit->setTile(this, tileBelow);
+		auto tileBelow = saveBattleGame->getBelowTile(this);
+		bu = tileBelow->getUnit();
+		if (bu && bu->getHeight() + bu->getFloatHeight() - tileBelow->getTerrainLevel() <= static_cast<int>(range))
+		{
+			bu = nullptr; // if the unit below has no voxels poking into the tile, don't select it.
+		}
 	}
-	_unit = unit;
+	return bu;
 }
 
 /**
@@ -788,19 +843,48 @@ void Tile::removeItem(BattleItem *item)
  * Get the topmost item sprite to draw on the battlescape.
  * @return item sprite ID in floorob, or -1 when no item
  */
-int Tile::getTopItemSprite()
+BattleItem* Tile::getTopItem()
 {
 	int biggestWeight = -1;
-	int biggestItem = -1;
+	BattleItem* biggestItem = 0;
 	for (std::vector<BattleItem*>::iterator i = _inventory.begin(); i != _inventory.end(); ++i)
 	{
-		if ((*i)->getRules()->getWeight() > biggestWeight)
+		int temp = (*i)->getTotalWeight();
+		if (temp > biggestWeight)
 		{
-			biggestWeight = (*i)->getRules()->getWeight();
-			biggestItem = (*i)->getRules()->getFloorSprite();
+			biggestWeight = temp;
+			biggestItem = *i;
 		}
 	}
 	return biggestItem;
+}
+
+/**
+ * Apply environment damage to unit.
+ * @param unit affected unit.
+ * @param smoke amount of smoke.
+ * @param fire amount of file.
+ */
+static inline void applyEnvi(BattleUnit* unit, int smoke, int fire, bool smokeDamage)
+{
+	if (unit)
+	{
+		if (fire)
+		{
+			//and avoid setting fire elementals on fire
+			if (unit->getSpecialAbility() != SPECAB_BURNFLOOR && unit->getSpecialAbility() != SPECAB_BURN_AND_EXPLODE)
+			{
+				// _smoke becomes our damage value
+				unit->setEnviFire(smoke);
+			}
+		}
+		// no fire: must be smoke
+		else if (smokeDamage)
+		{
+			// try to knock this guy out.
+			unit->setEnviSmoke(smoke / 4 + 1);
+		}
+	}
 }
 
 /**
@@ -818,41 +902,10 @@ void Tile::prepareNewTurn(bool smokeDamage)
 	// if we still have smoke/fire
 	if (_smoke)
 	{
-		if (_unit && !_unit->isOut())
+		applyEnvi(_unit, _smoke, _fire, smokeDamage);
+		for (std::vector<BattleItem*>::iterator i = _inventory.begin(); i != _inventory.end(); ++i)
 		{
-			if (_fire)
-			{
-				// this is how we avoid hitting the same unit multiple times.
-				if ((_unit->getArmor()->getSize() == 1 || !_unit->tookFireDamage())
-					//and avoid setting fire elementals on fire
-					&& _unit->getSpecialAbility() != SPECAB_BURNFLOOR && _unit->getSpecialAbility() != SPECAB_BURN_AND_EXPLODE)
-				{
-					_unit->toggleFireDamage();
-					// _smoke becomes our damage value
-					_unit->damage(Position(0, 0, 0), _smoke, DT_IN, true);
-					// try to set the unit on fire.
-					if (RNG::percent(40 * _unit->getArmor()->getDamageModifier(DT_IN)))
-					{
-						int burnTime = RNG::generate(0, int(5.0f * _unit->getArmor()->getDamageModifier(DT_IN)));
-						if (_unit->getFire() < burnTime)
-						{
-							_unit->setFire(burnTime);
-						}
-					}
-				}
-			}
-			// no fire: must be smoke
-			else
-			{
-				if (smokeDamage)
-				{
-					// try to knock this guy out.
-					if (_unit->getArmor()->getDamageModifier(DT_SMOKE) > 0.0 && _unit->getArmor()->getSize() == 1)
-					{
-						_unit->damage(Position(0,0,0), (_smoke / 4) + 1, DT_SMOKE, true);
-					}
-				}
-			}
+			applyEnvi((*i)->getUnit(), _smoke, _fire, smokeDamage);
 		}
 	}
 	_overlaps = 0;

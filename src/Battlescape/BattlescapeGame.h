@@ -18,6 +18,7 @@
  * along with OpenXcom.  If not, see <http:///www.gnu.org/licenses/>.
  */
 #include "Position.h"
+#include "../Mod/RuleItem.h"
 #include <SDL.h>
 #include <string>
 #include <list>
@@ -38,20 +39,42 @@ class Mod;
 class InfoboxOKState;
 class SoldierDiary;
 
-enum BattleActionType { BA_NONE, BA_TURN, BA_WALK, BA_PRIME, BA_THROW, BA_AUTOSHOT, BA_SNAPSHOT, BA_AIMEDSHOT, BA_HIT, BA_USE, BA_LAUNCH, BA_MINDCONTROL, BA_PANIC, BA_RETHINK };
+enum BattleActionType : Uint8 { BA_NONE, BA_TURN, BA_WALK, BA_KNEEL, BA_PRIME, BA_UNPRIME, BA_THROW, BA_AUTOSHOT, BA_SNAPSHOT, BA_AIMEDSHOT, BA_HIT, BA_USE, BA_LAUNCH, BA_MINDCONTROL, BA_PANIC, BA_RETHINK, BA_CQB };
+enum BattleActionMove { BAM_NORMAL = 0, BAM_RUN = 1, BAM_STRAFE = 2 };
 
-struct BattleAction
+struct BattleActionCost : RuleItemUseCost
 {
 	BattleActionType type;
 	BattleUnit *actor;
 	BattleItem *weapon;
+
+	/// Default constructor.
+	BattleActionCost() : type(BA_NONE), actor(0), weapon(0) { }
+
+	/// Constructor from unit.
+	BattleActionCost(BattleUnit *unit) : type(BA_NONE), actor(unit), weapon(0) { }
+
+	/// Constructor with update.
+	BattleActionCost(BattleActionType action, BattleUnit *unit, BattleItem *item) : type(action), actor(unit), weapon(item) { updateTU(); }
+
+	/// Update value of TU based of actor, weapon and type.
+	void updateTU();
+	/// Set TU to zero.
+	void clearTU();
+	/// Test if actor have enough TU to perform weapon action.
+	bool haveTU(std::string *message = 0);
+	/// Spend TU when actor have enough TU.
+	bool spendTU(std::string *message = 0);
+};
+
+struct BattleAction : BattleActionCost
+{
 	Position target;
 	std::list<Position> waypoints;
-	int TU;
 	bool targeting;
 	int value;
 	std::string result;
-	bool strafe, run;
+	bool strafe, run, ignoreSpottedEnemies;
 	int diff;
 	int autoShotCounter;
 	Position cameraPosition;
@@ -59,7 +82,36 @@ struct BattleAction
 	int finalFacing;
 	bool finalAction;
 	int number; // first action of turn, second, etc.?
-	BattleAction() : type(BA_NONE), actor(0), weapon(0), TU(0), targeting(false), value(0), strafe(false), run(false), diff(0), autoShotCounter(0), cameraPosition(0, 0, -1), desperate(false), finalFacing(-1), finalAction(false), number(0) { }
+	bool sprayTargeting; // Used to separate waypoint checks between confirm firing mode and the "spray" autoshot
+
+	/// Default constructor
+	BattleAction() : target(-1, -1, -1), targeting(false), value(0), strafe(false), run(false), diff(0), autoShotCounter(0), cameraPosition(0, 0, -1), desperate(false), finalFacing(-1), finalAction(false), number(0), sprayTargeting(false) { }
+
+	/// Get move type
+	BattleActionMove getMoveType() const
+	{
+		return strafe ? BAM_STRAFE : run ? BAM_RUN : BAM_NORMAL;
+	}
+};
+
+struct BattleActionAttack
+{
+	BattleActionType type;
+	BattleUnit *attacker;
+	BattleItem *weapon_item;
+	BattleItem *damage_item;
+
+	/// Defulat constructor.
+	BattleActionAttack(BattleActionType action = BA_NONE, BattleUnit *unit = nullptr) : type{ action }, attacker{ unit }, weapon_item{ nullptr }, damage_item{ nullptr }
+	{
+
+	}
+
+	/// Constructor.
+	BattleActionAttack(BattleActionType action, BattleUnit *unit, BattleItem *item, BattleItem *ammo);
+
+	/// Constructor.
+	BattleActionAttack(const BattleActionCost &action, BattleItem *ammo);
 };
 
 /**
@@ -76,6 +128,7 @@ private:
 	BattleAction _currentAction;
 	bool _AISecondMove, _playedAggroSound;
 	bool _endTurnRequested, _endTurnProcessed;
+	bool _endConfirmationHandled;
 
 	/// Ends the turn.
 	void endTurn();
@@ -117,15 +170,22 @@ public:
 	/// Sets state think interval.
 	void setStateInterval(Uint32 interval);
 	/// Checks for casualties in battle.
-	void checkForCasualties(BattleItem *murderweapon, BattleUnit *origMurderer, bool hiddenExplosion = false, bool terrainExplosion = false);
-	/// Checks reserved tu.
-	bool checkReservedTU(BattleUnit *bu, int tu, bool justChecking = false);
+	void checkForCasualties(const RuleDamageType *damageType, BattleActionAttack attack, bool hiddenExplosion = false, bool terrainExplosion = false);
+	/// Checks reserved tu and energy.
+	bool checkReservedTU(BattleUnit *bu, int tu, int energy, bool justChecking = false);
 	/// Handles unit AI.
 	void handleAI(BattleUnit *unit);
 	/// Drops an item and affects it with gravity.
-	void dropItem(Position position, BattleItem *item, bool newItem = false, bool removeItem = false);
+	void dropItem(Position position, BattleItem *item, bool removeItem = false, bool updateLight = true);
 	/// Converts a unit into a unit of another type.
 	BattleUnit *convertUnit(BattleUnit *unit);
+	/// Spawns a new unit in the middle of battle.
+	void spawnNewUnit(BattleItem *item);
+	void spawnNewUnit(BattleActionAttack attack, Position position);
+	/// Spawns units from items that explode before battle
+	void spawnFromPrimedItems();
+	/// Removes spawned units that belong to the player to avoid dealing with recovery
+	void removeSummonedPlayerUnits();
 	/// Handles kneeling action.
 	bool kneel(BattleUnit *bu);
 	/// Cancels the current action.
@@ -142,10 +202,12 @@ public:
 	void launchAction();
 	/// Handler for the psi button.
 	void psiButtonAction();
+	/// Handle psi attack result message.
+	void psiAttackMessage(BattleActionAttack attack, BattleUnit *victim);
 	/// Moves a unit up or down.
 	void moveUpDown(BattleUnit *unit, int dir);
 	/// Requests the end of the turn (wait for explosions etc to really end the turn).
-	void requestEndTurn();
+	void requestEndTurn(bool askForConfirmation);
 	/// Sets the TU reserved type.
 	void setTUReserved(BattleActionType tur);
 	/// Sets up the cursor taking into account the action.
@@ -163,11 +225,11 @@ public:
 	/// Returns whether panic has been handled.
 	bool getPanicHandled() const { return _playerPanicHandled; }
 	/// Tries to find an item and pick it up if possible.
-	void findItem(BattleAction *action);
+	bool findItem(BattleAction *action, bool pickUpWeaponsMoreActively);
 	/// Checks through all the items on the ground and picks one.
-	BattleItem *surveyItems(BattleAction *action);
+	BattleItem *surveyItems(BattleAction *action, bool pickUpWeaponsMoreActively);
 	/// Evaluates if it's worthwhile to take this item.
-	bool worthTaking(BattleItem* item, BattleAction *action);
+	bool worthTaking(BattleItem* item, BattleAction *action, bool pickUpWeaponsMoreActively);
 	/// Picks the item up from the ground.
 	int takeItemFromGround(BattleItem* item, BattleAction *action);
 	/// Assigns the item to a slot (stolen from battlescapeGenerator::addItem()).
@@ -175,6 +237,7 @@ public:
 	/// Returns the type of action that is reserved.
 	BattleActionType getReservedAction();
 	/// Tallies the living units, converting them if necessary.
+	bool isSurrendering(BattleUnit* bu);
 	void tallyUnits(int &liveAliens, int &liveSoldiers);
 	bool convertInfected();
 	/// Sets the kneel reservation setting.
@@ -182,11 +245,15 @@ public:
 	/// Checks the kneel reservation setting.
 	bool getKneelReserved() const;
 	/// Checks for and triggers proximity grenades.
-	bool checkForProximityGrenades(BattleUnit *unit);
+	int checkForProximityGrenades(BattleUnit *unit);
 	/// Cleans up all the deleted states.
 	void cleanupDeleted();
 	/// Get the depth of the saved game.
 	int getDepth() const;
+	/// Play sound on battlefield (with direction).
+	void playSound(int sound, const Position &pos);
+	/// Play sound on battlefield.
+	void playSound(int sound);
 	/// Sets up a mission complete notification.
 	void missionComplete();
 	std::list<BattleState*> getStates();

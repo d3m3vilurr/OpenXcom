@@ -17,8 +17,8 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "SavedGame.h"
-#include <fstream>
 #include <sstream>
+#include <set>
 #include <iomanip>
 #include <algorithm>
 #include <yaml-cpp/yaml.h>
@@ -36,6 +36,7 @@
 #include "Country.h"
 #include "Base.h"
 #include "Craft.h"
+#include "EquipmentLayoutItem.h"
 #include "Region.h"
 #include "Ufo.h"
 #include "Waypoint.h"
@@ -44,13 +45,19 @@
 #include "ItemContainer.h"
 #include "Soldier.h"
 #include "Transfer.h"
+#include "../Mod/ArticleDefinition.h"
+#include "../Mod/RuleResearch.h"
 #include "../Mod/RuleManufacture.h"
+#include "../Mod/RuleBaseFacility.h"
+#include "../Mod/RuleSoldierTransformation.h"
 #include "Production.h"
 #include "MissionSite.h"
 #include "AlienBase.h"
 #include "AlienStrategy.h"
 #include "AlienMission.h"
 #include "../Mod/RuleRegion.h"
+#include "../Mod/RuleSoldier.h"
+#include "BaseFacility.h"
 #include "MissionStatistics.h"
 #include "SoldierDeath.h"
 
@@ -60,6 +67,9 @@ namespace OpenXcom
 const std::string SavedGame::AUTOSAVE_GEOSCAPE = "_autogeo_.asav",
 				  SavedGame::AUTOSAVE_BATTLESCAPE = "_autobattle_.asav",
 				  SavedGame::QUICKSAVE = "_quick_.asav";
+
+namespace
+{
 
 struct findRuleResearch : public std::unary_function<ResearchProject *,
 								bool>
@@ -95,10 +105,37 @@ bool equalProduction::operator()(const Production * p) const
 	return p->getRules() == _item;
 }
 
+bool researchLess(const RuleResearch *a, const RuleResearch *b)
+{
+	return std::less<const RuleResearch *>{}(a, b);
+}
+
+template<typename T>
+void sortReserchVector(std::vector<T> &vec)
+{
+	std::sort(vec.begin(), vec.end(), researchLess);
+}
+
+bool haveReserchVector(const std::vector<const RuleResearch*> &vec, const RuleResearch *res)
+{
+	auto find = std::lower_bound(vec.begin(), vec.end(), res, researchLess);
+	return find != vec.end() && *find == res;
+}
+
+bool haveReserchVector(const std::vector<const RuleResearch*> &vec,  const std::string &res)
+{
+	auto find = std::find_if(vec.begin(), vec.end(), [&](const RuleResearch* r){ return r->getName() == res; });
+	return find != vec.end();
+}
+
+}
+
 /**
  * Initializes a brand new saved game according to the specified difficulty.
  */
-SavedGame::SavedGame() : _difficulty(DIFF_BEGINNER), _end(END_NONE), _ironman(false), _globeLon(0.0), _globeLat(0.0), _globeZoom(0), _battleGame(0), _debug(false), _warned(false), _monthsPassed(-1), _selectedBase(0)
+SavedGame::SavedGame() : _difficulty(DIFF_BEGINNER), _end(END_NONE), _ironman(false), _globeLon(0.0),
+						 _globeLat(0.0), _globeZoom(0), _battleGame(0), _debug(false),
+						 _warned(false), _monthsPassed(-1), _selectedBase(0), _autosales()
 {
 	_time = new GameTime(6, 1, 1, 1999, 12, 0, 0);
 	_alienStrategy = new AlienStrategy();
@@ -108,6 +145,11 @@ SavedGame::SavedGame() : _difficulty(DIFF_BEGINNER), _end(END_NONE), _ironman(fa
 	_incomes.push_back(0);
 	_expenditures.push_back(0);
 	_lastselectedArmor="STR_NONE_UC";
+
+	for (int j = 0; j < MAX_CRAFT_LOADOUT_TEMPLATES; ++j)
+	{
+		_globalCraftLoadout[j] = new ItemContainer();
+	}
 }
 
 /**
@@ -152,6 +194,17 @@ SavedGame::~SavedGame()
 	for (std::vector<Soldier*>::iterator i = _deadSoldiers.begin(); i != _deadSoldiers.end(); ++i)
 	{
 		delete *i;
+	}
+	for (int j = 0; j < MAX_EQUIPMENT_LAYOUT_TEMPLATES; ++j)
+	{
+		for (std::vector<EquipmentLayoutItem*>::iterator i = _globalEquipmentLayout[j].begin(); i != _globalEquipmentLayout[j].end(); ++i)
+		{
+			delete *i;
+		}
+	}
+	for (int j = 0; j < MAX_CRAFT_LOADOUT_TEMPLATES; ++j)
+	{
+		delete _globalCraftLoadout[j];
 	}
 	for (std::vector<MissionStatistics*>::iterator i = _missionStatistics.begin(); i != _missionStatistics.end(); ++i)
 	{
@@ -219,18 +272,19 @@ std::vector<SaveInfo> SavedGame::getList(Language *lang, bool autoquick)
 {
 	std::vector<SaveInfo> info;
 	std::string curMaster = Options::getActiveMaster();
-	std::vector<std::string> saves = CrossPlatform::getFolderContents(Options::getMasterUserFolder(), "sav");
+	auto saves = CrossPlatform::getFolderContents(Options::getMasterUserFolder(), "sav");
 
 	if (autoquick)
 	{
-		std::vector<std::string> asaves = CrossPlatform::getFolderContents(Options::getMasterUserFolder(), "asav");
+		auto asaves = CrossPlatform::getFolderContents(Options::getMasterUserFolder(), "asav");
 		saves.insert(saves.begin(), asaves.begin(), asaves.end());
 	}
-	for (std::vector<std::string>::iterator i = saves.begin(); i != saves.end(); ++i)
+	for (auto i = saves.begin(); i != saves.end(); ++i)
 	{
+		auto filename = std::get<0>(*i);
 		try
 		{
-			SaveInfo saveInfo = getSaveInfo(*i, lang);
+			SaveInfo saveInfo = getSaveInfo(filename, lang);
 			if (!_isCurrentGameType(saveInfo, curMaster))
 			{
 				continue;
@@ -239,12 +293,12 @@ std::vector<SaveInfo> SavedGame::getList(Language *lang, bool autoquick)
 		}
 		catch (Exception &e)
 		{
-			Log(LOG_ERROR) << (*i) << ": " << e.what();
+			Log(LOG_ERROR) << filename << ": " << e.what();
 			continue;
 		}
 		catch (YAML::Exception &e)
 		{
-			Log(LOG_ERROR) << (*i) << ": " << e.what();
+			Log(LOG_ERROR) << filename << ": " << e.what();
 			continue;
 		}
 	}
@@ -260,7 +314,7 @@ std::vector<SaveInfo> SavedGame::getList(Language *lang, bool autoquick)
 SaveInfo SavedGame::getSaveInfo(const std::string &file, Language *lang)
 {
 	std::string fullname = Options::getMasterUserFolder() + file;
-	YAML::Node doc = YAML::LoadFile(fullname);
+	YAML::Node doc = YAML::Load(*CrossPlatform::readFile(fullname));
 	SaveInfo save;
 
 	save.fileName = file;
@@ -288,7 +342,7 @@ SaveInfo SavedGame::getSaveInfo(const std::string &file, Language *lang)
 		}
 		else
 		{
-			save.displayName = Unicode::convPathToUtf8(CrossPlatform::noExt(file));
+			save.displayName = CrossPlatform::noExt(file);
 		}
 		save.reserved = false;
 	}
@@ -330,13 +384,8 @@ SaveInfo SavedGame::getSaveInfo(const std::string &file, Language *lang)
  */
 void SavedGame::load(const std::string &filename, Mod *mod)
 {
-	std::string s = Options::getMasterUserFolder() + filename;
-	std::vector<YAML::Node> file = YAML::LoadAllFromFile(s);
-	if (file.empty())
-	{
-		throw Exception(filename + " is not a vaild save file");
-	}
-
+	std::string filepath = Options::getMasterUserFolder() + filename;
+	std::vector<YAML::Node> file = YAML::LoadAll(*CrossPlatform::readFile(filepath));
 	// Get brief save info
 	YAML::Node brief = file[0];
 	_time->load(brief["time"]);
@@ -346,7 +395,7 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 	}
 	else
 	{
-		_name = Unicode::convPathToUtf8(filename);
+		_name = filename;
 	}
 	_ironman = brief["ironman"].as<bool>(_ironman);
 
@@ -407,7 +456,7 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 		std::string deployment = (*i)["deployment"].as<std::string>("STR_ALIEN_BASE_ASSAULT");
 		if (mod->getDeployment(deployment))
 		{
-			AlienBase *b = new AlienBase(mod->getDeployment(deployment));
+			AlienBase *b = new AlienBase(mod->getDeployment(deployment), 0);
 			b->load(*i);
 			_alienBases.push_back(b);
 		}
@@ -440,7 +489,7 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 		std::string type = (*i)["type"].as<std::string>();
 		if (mod->getUfo(type))
 		{
-			Ufo *u = new Ufo(mod->getUfo(type));
+			Ufo *u = new Ufo(mod->getUfo(type), 0);
 			u->load(*i, *mod, *this);
 			_ufos.push_back(u);
 		}
@@ -464,7 +513,7 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 		std::string deployment = "STR_TERROR_MISSION";
 		if (mod->getAlienMission(type) && mod->getDeployment(deployment))
 		{
-			MissionSite *m = new MissionSite(mod->getAlienMission(type), mod->getDeployment(deployment));
+			MissionSite *m = new MissionSite(mod->getAlienMission(type), mod->getDeployment(deployment), nullptr);
 			m->load(*i);
 			_missionSites.push_back(m);
 		}
@@ -478,9 +527,10 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 	{
 		std::string type = (*i)["type"].as<std::string>();
 		std::string deployment = (*i)["deployment"].as<std::string>("STR_TERROR_MISSION");
+		std::string alienWeaponDeploy = (*i)["missionCustomDeploy"].as<std::string>("");
 		if (mod->getAlienMission(type) && mod->getDeployment(deployment))
 		{
-			MissionSite *m = new MissionSite(mod->getAlienMission(type), mod->getDeployment(deployment));
+			MissionSite *m = new MissionSite(mod->getAlienMission(type), mod->getDeployment(deployment), mod->getDeployment(alienWeaponDeploy));
 			m->load(*i);
 			_missionSites.push_back(m);
 		}
@@ -503,12 +553,69 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 			Log(LOG_ERROR) << "Failed to load research " << research;
 		}
 	}
+	sortReserchVector(_discovered);
+
+	_ufopediaRuleStatus = doc["ufopediaRuleStatus"].as< std::map<std::string, int> >(_ufopediaRuleStatus);
+	_manufactureRuleStatus = doc["manufactureRuleStatus"].as< std::map<std::string, int> >(_manufactureRuleStatus);
+	_researchRuleStatus = doc["researchRuleStatus"].as< std::map<std::string, int> >(_researchRuleStatus);
+	_hiddenPurchaseItemsMap = doc["hiddenPurchaseItems"].as< std::map<std::string, bool> >(_hiddenPurchaseItemsMap);
 
 	for (YAML::const_iterator i = doc["bases"].begin(); i != doc["bases"].end(); ++i)
 	{
 		Base *b = new Base(mod);
 		b->load(*i, this, false);
 		_bases.push_back(b);
+	}
+
+	// Finish loading crafts after bases (more specifically after all crafts) are loaded, because of references between crafts (i.e. friendly escorts)
+	{
+		for (YAML::const_iterator i = doc["bases"].begin(); i != doc["bases"].end(); ++i)
+		{
+			// Bases don't have IDs and names are not unique, so need to consider lon/lat too
+			double lon = (*i)["lon"].as<double>(0.0);
+			double lat = (*i)["lat"].as<double>(0.0);
+			std::string baseName = "";
+			if (const YAML::Node &name = (*i)["name"])
+			{
+				baseName = name.as<std::string>();
+			}
+
+			Base *base = 0;
+			for (std::vector<Base*>::iterator b = _bases.begin(); b != _bases.end(); ++b)
+			{
+				if (AreSame(lon, (*b)->getLongitude()) && AreSame(lat, (*b)->getLatitude()) && (*b)->getName() == baseName)
+				{
+					base = (*b);
+					break;
+				}
+			}
+			if (base)
+			{
+				base->finishLoading(*i, this);
+			}
+		}
+	}
+
+	// Finish loading UFOs after all craft and all other UFOs are loaded
+	for (YAML::const_iterator i = doc["ufos"].begin(); i != doc["ufos"].end(); ++i)
+	{
+		int uniqueUfoId = (*i)["uniqueId"].as<int>(0);
+		if (uniqueUfoId > 0)
+		{
+			Ufo *ufo = 0;
+			for (std::vector<Ufo*>::iterator u = _ufos.begin(); u != _ufos.end(); ++u)
+			{
+				if ((*u)->getUniqueId() == uniqueUfoId)
+				{
+					ufo = (*u);
+					break;
+				}
+			}
+			if (ufo)
+			{
+				ufo->finishLoading(*i, *this);
+			}
+		}
 	}
 
 	const YAML::Node &research = doc["poppedResearch"];
@@ -532,12 +639,78 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 		if (mod->getSoldier(type))
 		{
 			Soldier *soldier = new Soldier(mod->getSoldier(type), 0);
-			soldier->load(*i, mod, this);
+			soldier->load(*i, mod, this, mod->getScriptGlobal());
 			_deadSoldiers.push_back(soldier);
 		}
 		else
 		{
 			Log(LOG_ERROR) << "Failed to load soldier " << type;
+		}
+	}
+
+	for (int j = 0; j < MAX_EQUIPMENT_LAYOUT_TEMPLATES; ++j)
+	{
+		std::ostringstream oss;
+		oss << "globalEquipmentLayout" << j;
+		std::string key = oss.str();
+		if (const YAML::Node &layout = doc[key])
+		{
+			for (YAML::const_iterator i = layout.begin(); i != layout.end(); ++i)
+			{
+				EquipmentLayoutItem *layoutItem = new EquipmentLayoutItem(*i);
+
+				// check if everything still exists (in case of mod upgrades)
+				bool error = false;
+				if (!mod->getInventory(layoutItem->getSlot()))
+					error = true;
+				if (!mod->getItem(layoutItem->getItemType()))
+					error = true;
+				for (int slot = 0; slot < RuleItem::AmmoSlotMax; ++slot)
+				{
+					if (layoutItem->getAmmoItemForSlot(slot) == "NONE" || mod->getItem(layoutItem->getAmmoItemForSlot(slot)))
+					{
+						// ok
+					}
+					else
+					{
+						error = true;
+						break;
+					}
+				}
+				if (!error)
+				{
+					_globalEquipmentLayout[j].push_back(layoutItem);
+				}
+				else
+				{
+					delete layoutItem;
+				}
+			}
+		}
+		std::ostringstream oss2;
+		oss2 << "globalEquipmentLayoutName" << j;
+		std::string key2 = oss2.str();
+		if (doc[key2])
+		{
+			_globalEquipmentLayoutName[j] = doc[key2].as<std::string>();
+		}
+	}
+
+	for (int j = 0; j < MAX_CRAFT_LOADOUT_TEMPLATES; ++j)
+	{
+		std::ostringstream oss;
+		oss << "globalCraftLoadout" << j;
+		std::string key = oss.str();
+		if (const YAML::Node &loadout = doc[key])
+		{
+			_globalCraftLoadout[j]->load(loadout);
+		}
+		std::ostringstream oss2;
+		oss2 << "globalCraftLoadoutName" << j;
+		std::string key2 = oss2.str();
+		if (doc[key2])
+		{
+			_globalCraftLoadoutName[j] = doc[key2].as<std::string>();
 		}
 	}
 
@@ -548,26 +721,29 @@ void SavedGame::load(const std::string &filename, Mod *mod)
 		_missionStatistics.push_back(ms);
 	}
 
+	for (YAML::const_iterator it = doc["autoSales"].begin(); it != doc["autoSales"].end(); ++it)
+	{
+		std::string itype = it->as<std::string>();
+		if (mod->getItem(itype))
+		{
+			_autosales.insert(mod->getItem(itype));
+		}
+	}
+
 	if (const YAML::Node &battle = doc["battleGame"])
 	{
-		_battleGame = new SavedBattleGame();
+		_battleGame = new SavedBattleGame(mod);
 		_battleGame->load(battle, mod, this);
 	}
+
 }
 
 /**
  * Saves a saved game's contents to a YAML file.
  * @param filename YAML filename.
  */
-void SavedGame::save(const std::string &filename) const
+void SavedGame::save(const std::string &filename, Mod *mod) const
 {
-	std::string s = Options::getMasterUserFolder() + filename;
-	std::ofstream sav(s.c_str());
-	if (!sav)
-	{
-		throw Exception("Failed to save " + filename);
-	}
-
 	YAML::Emitter out;
 
 	// Saves the brief game info used in the saves list
@@ -661,10 +837,49 @@ void SavedGame::save(const std::string &filename) const
 	{
 		node["poppedResearch"].push_back((*i)->getName());
 	}
+	node["ufopediaRuleStatus"] = _ufopediaRuleStatus;
+	node["manufactureRuleStatus"] = _manufactureRuleStatus;
+	node["researchRuleStatus"] = _researchRuleStatus;
+	node["hiddenPurchaseItems"] = _hiddenPurchaseItemsMap;
 	node["alienStrategy"] = _alienStrategy->save();
 	for (std::vector<Soldier*>::const_iterator i = _deadSoldiers.begin(); i != _deadSoldiers.end(); ++i)
 	{
-		node["deadSoldiers"].push_back((*i)->save());
+		node["deadSoldiers"].push_back((*i)->save(mod->getScriptGlobal()));
+	}
+	for (int j = 0; j < MAX_EQUIPMENT_LAYOUT_TEMPLATES; ++j)
+	{
+		std::ostringstream oss;
+		oss << "globalEquipmentLayout" << j;
+		std::string key = oss.str();
+		if (!_globalEquipmentLayout[j].empty())
+		{
+			for (std::vector<EquipmentLayoutItem*>::const_iterator i = _globalEquipmentLayout[j].begin(); i != _globalEquipmentLayout[j].end(); ++i)
+				node[key].push_back((*i)->save());
+		}
+		std::ostringstream oss2;
+		oss2 << "globalEquipmentLayoutName" << j;
+		std::string key2 = oss2.str();
+		if (!_globalEquipmentLayoutName[j].empty())
+		{
+			node[key2] = _globalEquipmentLayoutName[j];
+		}
+	}
+	for (int j = 0; j < MAX_CRAFT_LOADOUT_TEMPLATES; ++j)
+	{
+		std::ostringstream oss;
+		oss << "globalCraftLoadout" << j;
+		std::string key = oss.str();
+		if (_globalCraftLoadout[j])
+		{
+			node[key] = _globalCraftLoadout[j]->save();
+		}
+		std::ostringstream oss2;
+		oss2 << "globalCraftLoadoutName" << j;
+		std::string key2 = oss2.str();
+		if (!_globalCraftLoadoutName[j].empty())
+		{
+			node[key2] = _globalCraftLoadoutName[j];
+		}
 	}
 	if (Options::soldierDiaries)
 	{
@@ -673,16 +888,21 @@ void SavedGame::save(const std::string &filename) const
 			node["missionStatistics"].push_back((*i)->save());
 		}
 	}
+	for (std::set<const RuleItem*>::const_iterator i = _autosales.begin(); i != _autosales.end(); ++i)
+	{
+		node["autoSales"].push_back((*i)->getName());
+	}
 	if (_battleGame != 0)
 	{
 		node["battleGame"] = _battleGame->save();
 	}
 	out << node;
-	sav << out.c_str();
-	sav.close();
-	if (!sav)
+
+
+	std::string filepath = Options::getMasterUserFolder() + filename;
+	if (!CrossPlatform::writeFile(filepath, out.c_str()))
 	{
-		throw Exception("Failed to save " + filename);
+		throw Exception("Failed to save " + filepath);
 	}
 }
 
@@ -1041,6 +1261,15 @@ std::vector<Ufo*> *SavedGame::getUfos()
 }
 
 /**
+ * Returns the list of alien UFOs.
+ * @return Pointer to UFO list.
+ */
+const std::vector<Ufo*> *SavedGame::getUfos() const
+{
+	return &_ufos;
+}
+
+/**
  * Returns the list of craft waypoints.
  * @return Pointer to waypoint list.
  */
@@ -1078,12 +1307,75 @@ void SavedGame::setBattleGame(SavedBattleGame *battleGame)
 }
 
 /**
+ * Sets the status of a ufopedia rule
+ * @param ufopediaRule The rule ID
+ * @param newStatus Status to be set
+ */
+void SavedGame::setUfopediaRuleStatus(const std::string &ufopediaRule, int newStatus)
+{
+	_ufopediaRuleStatus[ufopediaRule] = newStatus;
+}
+
+/**
+ * Sets the status of a manufacture rule
+ * @param manufactureRule The rule ID
+ * @param newStatus Status to be set
+ */
+void SavedGame::setManufactureRuleStatus(const std::string &manufactureRule, int newStatus)
+{
+	_manufactureRuleStatus[manufactureRule] = newStatus;
+}
+
+/**
+* Sets the status of a research rule
+* @param researchRule The rule ID
+* @param newStatus Status to be set
+*/
+void SavedGame::setResearchRuleStatus(const std::string &researchRule, int newStatus)
+{
+	_researchRuleStatus[researchRule] = newStatus;
+}
+
+/**
+ * Sets the hidden status of a purchase item
+ * @param purchase item name
+ * @param hidden
+ */
+void SavedGame::setHiddenPurchaseItemsStatus(const std::string &itemName, bool hidden)
+{
+	_hiddenPurchaseItemsMap[itemName] = hidden;
+}
+
+/**
+ * Get the map of hidden items
+ * @return map
+ */
+const std::map<std::string, bool> &SavedGame::getHiddenPurchaseItems()
+{
+    return _hiddenPurchaseItemsMap;
+}
+
+/*
+ * Checks for and removes a research project from the "already discovered" list
+ * @param research is the project we are checking for and removing, if necessary.
+ */
+void SavedGame::removeDiscoveredResearch(const RuleResearch * research)
+{
+	std::vector<const RuleResearch*>::iterator r = std::find(_discovered.begin(), _discovered.end(), research);
+	if (r != _discovered.end())
+	{
+		_discovered.erase(r);
+	}
+}
+
+/**
  * Add a ResearchProject to the list of already discovered ResearchProject
  * @param research The newly found ResearchProject
  */
 void SavedGame::addFinishedResearchSimple(const RuleResearch * research)
 {
 	_discovered.push_back(research);
+	sortReserchVector(_discovered);
 }
 
 /**
@@ -1095,6 +1387,12 @@ void SavedGame::addFinishedResearchSimple(const RuleResearch * research)
  */
 void SavedGame::addFinishedResearch(const RuleResearch * research, const Mod * mod, Base * base, bool score)
 {
+	if (isResearchRuleStatusDisabled(research->getName()))
+	{
+		// make absolutely sure disabled research never gets re-researched again by accident
+		return;
+	}
+
 	// Not really a queue in C++ terminology (we don't need or want pop_front())
 	std::vector<const RuleResearch *> queue;
 	queue.push_back(research);
@@ -1104,15 +1402,17 @@ void SavedGame::addFinishedResearch(const RuleResearch * research, const Mod * m
 	{
 		const RuleResearch *currentQueueItem = queue.at(currentQueueIndex);
 
-		// 1. Find out and remember if the currentQueueItem has any undiscovered "protected unlocks"
+		// 1. Find out and remember if the currentQueueItem has any undiscovered non-disabled "protected unlocks" or "getOneFree"
 		bool hasUndiscoveredProtectedUnlocks = hasUndiscoveredProtectedUnlock(currentQueueItem, mod);
+		bool hasAnyUndiscoveredGetOneFrees = hasUndiscoveredGetOneFree(currentQueueItem, false);
 
 		// 2. If the currentQueueItem was *not* already discovered before, add it to discovered research
 		bool checkRelatedZeroCostTopics = true;
-		if (!isResearched(currentQueueItem->getName(), false))
+		if (!isResearched(currentQueueItem, false))
 		{
 			_discovered.push_back(currentQueueItem);
-			if (!hasUndiscoveredProtectedUnlocks && isResearched(currentQueueItem->getGetOneFree(), false))
+			sortReserchVector(_discovered);
+			if (!hasUndiscoveredProtectedUnlocks && !hasAnyUndiscoveredGetOneFrees)
 			{
 				// If the currentQueueItem can't tell you anything anymore, remove it from popped research
 				// Note: this is for optimisation purposes only, functionally it is *not* required...
@@ -1122,6 +1422,12 @@ void SavedGame::addFinishedResearch(const RuleResearch * research, const Mod * m
 			if (score)
 			{
 				addResearchScore(currentQueueItem->getPoints());
+			}
+			// process "disables"
+			for (auto& dis : currentQueueItem->getDisabled())
+			{
+				removeDiscoveredResearch(dis); // un-research
+				setResearchRuleStatus(dis->getName(), RuleResearch::RESEARCH_STATUS_DISABLED); // mark as permanently disabled
 			}
 		}
 		else
@@ -1155,16 +1461,16 @@ void SavedGame::addFinishedResearch(const RuleResearch * research, const Mod * m
 			}
 
 			// 3b. Iterate through all available projects and add zero-cost projects to the processing queue
-			for (std::vector<RuleResearch*>::const_iterator itProjectToTest = availableResearch.begin(); itProjectToTest != availableResearch.end(); ++itProjectToTest)
+			for (const RuleResearch *itProjectToTest : availableResearch)
 			{
 				// We are only interested in zero-cost projects!
-				if ((*itProjectToTest)->getCost() == 0)
+				if (itProjectToTest->getCost() == 0)
 				{
 					// We are only interested in *new* projects (i.e. not processed or scheduled for processing yet)
 					bool isAlreadyInTheQueue = false;
-					for (std::vector<const RuleResearch *>::const_iterator itQueue = queue.begin(); itQueue != queue.end(); ++itQueue)
+					for (const RuleResearch *itQueue : queue)
 					{
-						if ((*itQueue)->getName() == (*itProjectToTest)->getName())
+						if (itQueue->getName() == itProjectToTest->getName())
 						{
 							isAlreadyInTheQueue = true;
 							break;
@@ -1173,19 +1479,19 @@ void SavedGame::addFinishedResearch(const RuleResearch * research, const Mod * m
 
 					if (!isAlreadyInTheQueue)
 					{
-						if ((*itProjectToTest)->getRequirements().empty())
+						if (itProjectToTest->getRequirements().empty())
 						{
 							// no additional checks for "unprotected" topics
-							queue.push_back((*itProjectToTest));
+							queue.push_back(itProjectToTest);
 						}
 						else
 						{
 							// for "protected" topics, we need to check if the currentQueueItem can unlock it or not
-							for (std::vector<std::string>::const_iterator itUnlocks = currentQueueItem->getUnlocked().begin(); itUnlocks != currentQueueItem->getUnlocked().end(); ++itUnlocks)
+							for (auto& itUnlocks : currentQueueItem->getUnlocked())
 							{
-								if ((*itProjectToTest)->getName() == (*itUnlocks))
+								if (itProjectToTest == itUnlocks)
 								{
-									queue.push_back((*itProjectToTest));
+									queue.push_back(itProjectToTest);
 									break;
 								}
 							}
@@ -1216,25 +1522,32 @@ const std::vector<const RuleResearch *> & SavedGame::getDiscoveredResearch() con
  * @param base a pointer to a Base
  * @param considerDebugMode Should debug mode be considered or not.
  */
-void SavedGame::getAvailableResearchProjects(std::vector<RuleResearch *> & projects, const Mod * mod, Base * base, bool considerDebugMode) const
+void SavedGame::getAvailableResearchProjects(std::vector<RuleResearch *> &projects, const Mod *mod, Base *base, bool considerDebugMode) const
 {
 	// This list is used for topics that can be researched even if *not all* dependencies have been discovered yet (e.g. STR_ALIEN_ORIGINS)
 	// Note: all requirements of such topics *have to* be discovered though! This will be handled elsewhere.
 	std::vector<const RuleResearch *> unlocked;
-	for (std::vector<const RuleResearch *>::const_iterator it = _discovered.begin(); it != _discovered.end(); ++it)
+	for (const RuleResearch *research : _discovered)
 	{
-		for (std::vector<std::string>::const_iterator itUnlocked = (*it)->getUnlocked().begin(); itUnlocked != (*it)->getUnlocked().end(); ++itUnlocked)
+		for (auto& itUnlocked : research->getUnlocked())
 		{
-			unlocked.push_back(mod->getResearch(*itUnlocked, true));
+			unlocked.push_back(itUnlocked);
 		}
+		sortReserchVector(unlocked);
 	}
 
 	// Create a list of research topics available for research in the given base
-	for (std::vector<std::string>::const_iterator iter = mod->getResearchList().begin(); iter != mod->getResearchList().end(); ++iter)
+	for (auto& pair : mod->getResearchMap())
 	{
-		RuleResearch *research = mod->getResearch(*iter);
+		// This research topic is permanently disabled, ignore it!
+		if (isResearchRuleStatusDisabled(pair.first))
+		{
+			continue;
+		}
 
-		if ((considerDebugMode && _debug) || std::find(unlocked.begin(), unlocked.end(), research) != unlocked.end())
+		RuleResearch *research = pair.second;
+
+		if ((considerDebugMode && _debug) || haveReserchVector(unlocked, research))
 		{
 			// Empty, these research topics are on the "unlocked list", *don't* check the dependencies!
 		}
@@ -1261,13 +1574,13 @@ void SavedGame::getAvailableResearchProjects(std::vector<RuleResearch *> & proje
 		// Remove the already researched topics from the list *UNLESS* they can still give you something more
 		if (isResearched(research->getName(), false))
 		{
-			if (!isResearched(research->getGetOneFree(), false))
+			if (hasUndiscoveredGetOneFree(research, true))
 			{
-				// This research topic still has some more undiscovered "getOneFree" topics, keep it!
+				// This research topic still has some more undiscovered non-disabled and *AVAILABLE* "getOneFree" topics, keep it!
 			}
 			else if (hasUndiscoveredProtectedUnlock(research, mod))
 			{
-				// This research topic still has one or more undiscovered "protected unlocks", keep it!
+				// This research topic still has one or more undiscovered non-disabled "protected unlocks", keep it!
 			}
 			else
 			{
@@ -1287,6 +1600,13 @@ void SavedGame::getAvailableResearchProjects(std::vector<RuleResearch *> & proje
 
 			// Check for needed item in the given base
 			if (research->needItem() && base->getStorageItems()->getItem(research->getName()) == 0)
+			{
+				continue;
+			}
+
+			// Check for required buildings/functions in the given base
+			const std::vector<std::string> &baseFunc = base->getProvidedBaseFunc();
+			if (!std::includes(baseFunc.begin(), baseFunc.end(), research->getRequireBaseFunc().begin(), research->getRequireBaseFunc().end()))
 			{
 				continue;
 			}
@@ -1323,9 +1643,9 @@ void SavedGame::getNewlyAvailableResearchProjects(std::vector<RuleResearch *> & 
 	// We could move the sorting of "before" vector right after its creation to optimize a little bit more.
 	// But sorting a short list is negligible compared to other operations we had to do to get to this point.
 	// So I decided to leave it here, so that it's 100% clear what's going on.
-	std::sort(before.begin(), before.end(), CompareRuleResearch());
-	std::sort(after.begin(), after.end(), CompareRuleResearch());
-	std::set_difference(after.begin(), after.end(), before.begin(), before.end(), std::inserter(diff, diff.begin()), CompareRuleResearch());
+	sortReserchVector(before);
+	sortReserchVector(after);
+	std::set_difference(after.begin(), after.end(), before.begin(), before.end(), std::inserter(diff, diff.begin()), researchLess);
 }
 
 /**
@@ -1334,10 +1654,11 @@ void SavedGame::getNewlyAvailableResearchProjects(std::vector<RuleResearch *> & 
  * @param mod the Game Mod
  * @param base a pointer to a Base
  */
-void SavedGame::getAvailableProductions (std::vector<RuleManufacture *> & productions, const Mod * mod, Base * base) const
+void SavedGame::getAvailableProductions (std::vector<RuleManufacture *> & productions, const Mod * mod, Base * base, ManufacturingFilterType filter) const
 {
 	const std::vector<std::string> &items = mod->getManufactureList();
-	const std::vector<Production *>& baseProductions (base->getProductions());
+	const std::vector<Production *> &baseProductions = base->getProductions();
+	const std::vector<std::string> &baseFunc = base->getProvidedBaseFunc();
 
 	for (std::vector<std::string>::const_iterator iter = items.begin();
 		iter != items.end();
@@ -1352,6 +1673,17 @@ void SavedGame::getAvailableProductions (std::vector<RuleManufacture *> & produc
 		{
 			continue;
 		}
+		if (!std::includes(baseFunc.begin(), baseFunc.end(), m->getRequireBaseFunc().begin(), m->getRequireBaseFunc().end()))
+		{
+			if (filter != MANU_FILTER_FACILITY_REQUIRED)
+				continue;
+		}
+		else
+		{
+			if (filter == MANU_FILTER_FACILITY_REQUIRED)
+				continue;
+		}
+
 		productions.push_back(m);
 	}
 }
@@ -1368,9 +1700,17 @@ void SavedGame::getDependableManufacture (std::vector<RuleManufacture *> & depen
 	const std::vector<std::string> &mans = mod->getManufactureList();
 	for (std::vector<std::string>::const_iterator iter = mans.begin(); iter != mans.end(); ++iter)
 	{
+		// don't show previously unlocked (and seen!) manufacturing topics
+		std::map<std::string, int>::const_iterator i = _manufactureRuleStatus.find(*iter);
+		if (i != _manufactureRuleStatus.end())
+		{
+			if (i->second != RuleManufacture::MANU_STATUS_NEW)
+				continue;
+		}
+
 		RuleManufacture *m = mod->getManufacture(*iter);
-		const std::vector<std::string> &reqs = m->getRequirements();
-		if (isResearched(m->getRequirements()) && std::find(reqs.begin(), reqs.end(), research->getName()) != reqs.end())
+		const auto &reqs = m->getRequirements();
+		if (isResearched(reqs) && std::find(reqs.begin(), reqs.end(), research) != reqs.end())
 		{
 			dependables.push_back(m);
 		}
@@ -1378,20 +1718,218 @@ void SavedGame::getDependableManufacture (std::vector<RuleManufacture *> & depen
 }
 
 /**
- * Returns if a research still has undiscovered "protected unlocks".
+ * Get the list of RuleSoldierTransformation which can occur at a base.
+ * @param transformations the list of Transformations which are available.
+ * @param mod the Game Mod
+ * @param base a pointer to a Base
+ */
+void SavedGame::getAvailableTransformations (std::vector<RuleSoldierTransformation *> & transformations, const Mod * mod, Base * base) const
+{
+	const std::vector<std::string> &items = mod->getSoldierTransformationList();
+	const std::vector<std::string> &baseFunc = base->getProvidedBaseFunc();
+
+	for (std::vector<std::string>::const_iterator iter = items.begin(); iter != items.end(); ++iter)
+	{
+		RuleSoldierTransformation *m = mod->getSoldierTransformation(*iter);
+		if (!isResearched(m->getRequiredResearch()))
+		{
+			continue;
+		}
+		if (!std::includes(baseFunc.begin(), baseFunc.end(), m->getRequiredBaseFuncs().begin(), m->getRequiredBaseFuncs().end()))
+		{
+			continue;
+		}
+
+		transformations.push_back(m);
+	}
+}
+
+/**
+ * Get the list of newly available items to purchase once a ResearchProject has been completed.
+ * @param dependables the list of RuleItem which are now available.
+ * @param research The RuleResearch which has just been discovered
+ * @param mod the Game Mod
+ */
+void SavedGame::getDependablePurchase(std::vector<RuleItem *> & dependables, const RuleResearch *research, const Mod * mod) const
+{
+	const std::vector<std::string> &itemlist = mod->getItemsList();
+	for (std::vector<std::string>::const_iterator iter = itemlist.begin(); iter != itemlist.end(); ++iter)
+	{
+		RuleItem *item = mod->getItem(*iter);
+		if (item->getBuyCost() != 0)
+		{
+			const std::vector<const RuleResearch *> &reqs = item->getRequirements();
+			bool found = std::find(reqs.begin(), reqs.end(), research) != reqs.end();
+			const std::vector<const RuleResearch *> &reqsBuy = item->getBuyRequirements();
+			bool foundBuy = std::find(reqsBuy.begin(), reqsBuy.end(), research) != reqsBuy.end();
+			if (found || foundBuy)
+			{
+				if (isResearched(item->getBuyRequirements()) && isResearched(item->getRequirements()))
+				{
+					dependables.push_back(item);
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Get the list of newly available craft to purchase/rent once a ResearchProject has been completed.
+ * @param dependables the list of RuleCraft which are now available.
+ * @param research The RuleResearch which has just been discovered
+ * @param mod the Game Mod
+ */
+void SavedGame::getDependableCraft(std::vector<RuleCraft *> & dependables, const RuleResearch *research, const Mod * mod) const
+{
+	const std::vector<std::string> &craftlist = mod->getCraftsList();
+	for (std::vector<std::string>::const_iterator iter = craftlist.begin(); iter != craftlist.end(); ++iter)
+	{
+		RuleCraft *craftItem = mod->getCraft(*iter);
+		if (craftItem->getBuyCost() != 0)
+		{
+			const std::vector<std::string> &reqs = craftItem->getRequirements();
+			if (std::find(reqs.begin(), reqs.end(), research->getName()) != reqs.end())
+			{
+				if (isResearched(craftItem->getRequirements()))
+				{
+					dependables.push_back(craftItem);
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Get the list of newly available facilities to build once a ResearchProject has been completed.
+ * @param dependables the list of RuleBaseFacility which are now available.
+ * @param research The RuleResearch which has just been discovered
+ * @param mod the Game Mod
+ */
+void SavedGame::getDependableFacilities(std::vector<RuleBaseFacility *> & dependables, const RuleResearch *research, const Mod * mod) const
+{
+	const std::vector<std::string> &facilitylist = mod->getBaseFacilitiesList();
+	for (std::vector<std::string>::const_iterator iter = facilitylist.begin(); iter != facilitylist.end(); ++iter)
+	{
+		RuleBaseFacility *facilityItem = mod->getBaseFacility(*iter);
+		const std::vector<std::string> &reqs = facilityItem->getRequirements();
+		if (std::find(reqs.begin(), reqs.end(), research->getName()) != reqs.end())
+		{
+			if (isResearched(facilityItem->getRequirements()))
+			{
+				dependables.push_back(facilityItem);
+			}
+		}
+	}
+}
+
+/**
+ * Gets the status of a ufopedia rule.
+ * @param ufopediaRule Ufopedia rule ID.
+ * @return Status (0=new, 1=normal).
+ */
+int SavedGame::getUfopediaRuleStatus(const std::string &ufopediaRule)
+{
+	return _ufopediaRuleStatus[ufopediaRule];
+}
+
+/**
+ * Gets the status of a manufacture rule.
+ * @param manufactureRule Manufacture rule ID.
+ * @return Status (0=new, 1=normal, 2=hidden).
+ */
+int SavedGame::getManufactureRuleStatus(const std::string &manufactureRule)
+{
+	return _manufactureRuleStatus[manufactureRule];
+}
+
+/**
+ * Is the research new?
+ * @param researchRule Research rule ID.
+ * @return True, if the research rule status is new.
+ */
+bool SavedGame::isResearchRuleStatusNew(const std::string &researchRule) const
+{
+	auto it = _researchRuleStatus.find(researchRule);
+	if (it != _researchRuleStatus.end())
+	{
+		if (it->second != RuleResearch::RESEARCH_STATUS_NEW)
+		{
+			return false;
+		}
+	}
+	return true; // no status = new
+}
+
+/**
+ * Is the research permanently disabled?
+ * @param researchRule Research rule ID.
+ * @return True, if the research rule status is disabled.
+ */
+bool SavedGame::isResearchRuleStatusDisabled(const std::string &researchRule) const
+{
+	auto it = _researchRuleStatus.find(researchRule);
+	if (it != _researchRuleStatus.end())
+	{
+		if (it->second == RuleResearch::RESEARCH_STATUS_DISABLED)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Returns if a research still has undiscovered non-disabled "getOneFree".
+ * @param r Research to check.
+ * @param checkOnlyAvailableTopics Check only available topics (=topics with discovered prerequisite) or all topics?
+ * @return Whether it has any undiscovered non-disabled "getOneFree" or not.
+ */
+bool SavedGame::hasUndiscoveredGetOneFree(const RuleResearch * r, bool checkOnlyAvailableTopics) const
+{
+	if (!isResearched(r->getGetOneFree(), false, true))
+	{
+		return true; // found something undiscovered (and NOT disabled) already, no need to search further
+	}
+	else
+	{
+		// search through getOneFreeProtected topics too
+		for (auto& itMap : r->getGetOneFreeProtected())
+		{
+			if (checkOnlyAvailableTopics && !isResearched(itMap.first, false))
+			{
+				// skip this group, its prerequisite has not been discovered yet
+			}
+			else
+			{
+				if (!isResearched(itMap.second, false, true))
+				{
+					return true; // found something undiscovered (and NOT disabled) already, no need to search further
+				}
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * Returns if a research still has undiscovered non-disabled "protected unlocks".
  * @param r Research to check.
  * @param mod the Game Mod
- * @return Whether it has any undiscovered "protected unlocks" or not.
+ * @return Whether it has any undiscovered non-disabled "protected unlocks" or not.
  */
 bool SavedGame::hasUndiscoveredProtectedUnlock(const RuleResearch * r, const Mod * mod) const
 {
 	// Note: checking for not yet discovered unlocks protected by "requires" (which also implies cost = 0)
-	for (std::vector<std::string>::const_iterator itUnlocked = r->getUnlocked().begin(); itUnlocked != r->getUnlocked().end(); ++itUnlocked)
+	for (auto& unlock : r->getUnlocked())
 	{
-		RuleResearch *unlock = mod->getResearch(*itUnlocked, true);
+		if (isResearchRuleStatusDisabled(unlock->getName()))
+		{
+			// ignore all disabled topics (as if they didn't exist)
+			continue;
+		}
 		if (!unlock->getRequirements().empty())
 		{
-			if (!isResearched(unlock->getName(), false))
+			if (!isResearched(unlock, false))
 			{
 				return true;
 			}
@@ -1412,43 +1950,77 @@ bool SavedGame::isResearched(const std::string &research, bool considerDebugMode
 	//	return true;
 	if (considerDebugMode && _debug)
 		return true;
-	for (std::vector<const RuleResearch *>::const_iterator i = _discovered.begin(); i != _discovered.end(); ++i)
-	{
-		if ((*i)->getName() == research)
-			return true;
-	}
 
-	return false;
+	return haveReserchVector(_discovered, research);
 }
 
-/**
- * Returns if a certain list of research topics has been completed.
- * @param research List of research IDs.
- * @param considerDebugMode Should debug mode be considered or not.
- * @return Whether it's researched or not.
- */
+bool SavedGame::isResearched(const RuleResearch *research, bool considerDebugMode) const
+{
+	//if (research.empty())
+	//	return true;
+	if (considerDebugMode && _debug)
+		return true;
+
+	return haveReserchVector(_discovered, research);
+}
+
 bool SavedGame::isResearched(const std::vector<std::string> &research, bool considerDebugMode) const
 {
 	if (research.empty())
 		return true;
 	if (considerDebugMode && _debug)
 		return true;
-	std::vector<std::string> matches = research;
-	for (std::vector<const RuleResearch *>::const_iterator i = _discovered.begin(); i != _discovered.end(); ++i)
+
+	for (const std::string &r : research)
 	{
-		for (std::vector<std::string>::iterator j = matches.begin(); j != matches.end(); ++j)
+		if (!haveReserchVector(_discovered, r))
 		{
-			if ((*i)->getName() == *j)
-			{
-				j = matches.erase(j);
-				break;
-			}
+			return false;
 		}
-		if (matches.empty())
-			return true;
 	}
 
-	return false;
+	return true;
+}
+
+/**
+ * Returns if a certain list of research topics has been completed.
+ * @param research List of research IDs.
+ * @param considerDebugMode Should debug mode be considered or not.
+ * @param skipDisabled Should permanently disabled topics be considered or not.
+ * @return Whether it's researched or not.
+ */
+bool SavedGame::isResearched(const std::vector<const RuleResearch *> &research, bool considerDebugMode, bool skipDisabled) const
+{
+	if (research.empty())
+		return true;
+	if (considerDebugMode && _debug)
+		return true;
+	std::vector<const RuleResearch *> matches = research;
+	if (skipDisabled)
+	{
+		// ignore all disabled topics (as if they didn't exist)
+		for (std::vector<const RuleResearch *>::iterator j = matches.begin(); j != matches.end();)
+		{
+			if (isResearchRuleStatusDisabled((*j)->getName()))
+			{
+				j = matches.erase(j);
+			}
+			else
+			{
+				++j;
+			}
+		}
+	}
+
+	for (auto& r : matches)
+	{
+		if (!haveReserchVector(_discovered, r))
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 /**
@@ -1481,9 +2053,10 @@ Soldier *SavedGame::getSoldier(int id) const
 /**
  * Handles the higher promotions (not the rookie-squaddie ones).
  * @param participants a list of soldiers that were actually present at the battle.
+ * @param mod the Game Mod
  * @return Whether or not some promotions happened - to show the promotions screen.
  */
-bool SavedGame::handlePromotions(std::vector<Soldier*> &participants)
+bool SavedGame::handlePromotions(std::vector<Soldier*> &participants, const Mod *mod)
 {
 	int soldiersPromoted = 0;
 	Soldier *highestRanked = 0;
@@ -1506,11 +2079,11 @@ bool SavedGame::handlePromotions(std::vector<Soldier*> &participants)
 		}
 	}
 
-	int totalSoldiers = (int)(soldiers.size());
+	int totalSoldiers = soldierData.totalSoldiers;
 
 	if (soldierData.totalCommanders == 0)
 	{
-		if (totalSoldiers >= 30)
+		if (totalSoldiers >= mod->getSoldiersPerCommander())
 		{
 			highestRanked = inspectSoldiers(soldiers, participants, RANK_COLONEL);
 			if (highestRanked)
@@ -1524,9 +2097,9 @@ bool SavedGame::handlePromotions(std::vector<Soldier*> &participants)
 		}
 	}
 
-	if ((totalSoldiers / 23) > soldierData.totalColonels)
+	if ((totalSoldiers / mod->getSoldiersPerColonel()) > soldierData.totalColonels)
 	{
-		while ((totalSoldiers / 23) > soldierData.totalColonels)
+		while ((totalSoldiers / mod->getSoldiersPerColonel()) > soldierData.totalColonels)
 		{
 			highestRanked = inspectSoldiers(soldiers, participants, RANK_CAPTAIN);
 			if (highestRanked)
@@ -1543,9 +2116,9 @@ bool SavedGame::handlePromotions(std::vector<Soldier*> &participants)
 		}
 	}
 
-	if ((totalSoldiers / 11) > soldierData.totalCaptains)
+	if ((totalSoldiers / mod->getSoldiersPerCaptain()) > soldierData.totalCaptains)
 	{
-		while ((totalSoldiers / 11) > soldierData.totalCaptains)
+		while ((totalSoldiers / mod->getSoldiersPerCaptain()) > soldierData.totalCaptains)
 		{
 			highestRanked = inspectSoldiers(soldiers, participants, RANK_SERGEANT);
 			if (highestRanked)
@@ -1562,9 +2135,9 @@ bool SavedGame::handlePromotions(std::vector<Soldier*> &participants)
 		}
 	}
 
-	if ((totalSoldiers / 5) > soldierData.totalSergeants)
+	if ((totalSoldiers / mod->getSoldiersPerSergeant()) > soldierData.totalSergeants)
 	{
-		while ((totalSoldiers / 5) > soldierData.totalSergeants)
+		while ((totalSoldiers / mod->getSoldiersPerSergeant()) > soldierData.totalSergeants)
 		{
 			highestRanked = inspectSoldiers(soldiers, participants, RANK_SQUADDIE);
 			if (highestRanked)
@@ -1590,6 +2163,15 @@ bool SavedGame::handlePromotions(std::vector<Soldier*> &participants)
  */
 void SavedGame::processSoldier(Soldier *soldier, PromotionInfo &soldierData)
 {
+	if (soldier->getRules()->getAllowPromotion())
+	{
+		soldierData.totalSoldiers++;
+	}
+	else
+	{
+		return;
+	}
+
 	switch (soldier->getRank())
 	{
 	case RANK_COMMANDER:
@@ -1622,7 +2204,17 @@ Soldier *SavedGame::inspectSoldiers(std::vector<Soldier*> &soldiers, std::vector
 	Soldier *highestRanked = 0;
 	for (std::vector<Soldier*>::iterator i = soldiers.begin(); i != soldiers.end(); ++i)
 	{
-		if ((*i)->getRank() == rank)
+		const std::vector<std::string> &rankStrings = (*i)->getRules()->getRankStrings();
+		bool rankIsMatching = ((*i)->getRank() == rank);
+		if (!rankStrings.empty())
+		{
+			// if rank is matching, but there are no more higher ranks defined for this soldier type, skip this soldier
+			if (rankIsMatching && (rank >= (int)rankStrings.size() - 1))
+			{
+				rankIsMatching = false;
+			}
+		}
+		if (rankIsMatching)
 		{
 			int score = getSoldierScore(*i);
 			if (score > highestScore && (!Options::fieldPromotions || std::find(participants.begin(), participants.end(), *i) != participants.end()))
@@ -1961,12 +2553,89 @@ Craft *SavedGame::findCraftByUniqueId(const CraftId& craftId) const
 }
 
 /**
+* Returns the global equipment layout at specified index.
+* @return Pointer to the EquipmentLayoutItem list.
+*/
+std::vector<EquipmentLayoutItem*> *SavedGame::getGlobalEquipmentLayout(int index)
+{
+	return &_globalEquipmentLayout[index];
+}
+
+/**
+* Returns the name of a global equipment layout at specified index.
+* @return A name.
+*/
+const std::string &SavedGame::getGlobalEquipmentLayoutName(int index) const
+{
+	return _globalEquipmentLayoutName[index];
+}
+
+/**
+* Sets the name of a global equipment layout at specified index.
+* @param index Array index.
+* @param name New name.
+*/
+void SavedGame::setGlobalEquipmentLayoutName(int index, const std::string &name)
+{
+	_globalEquipmentLayoutName[index] = name;
+}
+
+/**
+* Returns the global craft loadout at specified index.
+* @return Pointer to the ItemContainer list.
+*/
+ItemContainer *SavedGame::getGlobalCraftLoadout(int index)
+{
+	return _globalCraftLoadout[index];
+}
+
+/**
+* Returns the name of a global craft loadout at specified index.
+* @return A name.
+*/
+const std::string &SavedGame::getGlobalCraftLoadoutName(int index) const
+{
+	return _globalCraftLoadoutName[index];
+}
+
+/**
+* Sets the name of a global craft loadout at specified index.
+* @param index Array index.
+* @param name New name.
+*/
+void SavedGame::setGlobalCraftLoadoutName(int index, const std::string &name)
+{
+	_globalCraftLoadoutName[index] = name;
+}
+
+/**
  * Returns the list of mission statistics.
  * @return Pointer to statistics list.
  */
 std::vector<MissionStatistics*> *SavedGame::getMissionStatistics()
 {
 	return &_missionStatistics;
+}
+
+/**
+* Adds a UFO to the ignore list.
+* @param ufoId Ufo ID.
+*/
+void SavedGame::addUfoToIgnoreList(int ufoId)
+{
+	if (ufoId != 0)
+	{
+		_ignoredUfos.insert(ufoId);
+	}
+}
+
+/**
+* Checks if a UFO is on the ignore list.
+* @param ufoId Ufo ID.
+*/
+bool SavedGame::isUfoOnIgnoreList(int ufoId)
+{
+	return _ignoredUfos.find(ufoId) != _ignoredUfos.end();
 }
 
 /**
@@ -1990,6 +2659,74 @@ std::vector<Soldier*>::iterator SavedGame::killSoldier(Soldier *soldier, BattleU
 		}
 	}
 	return j;
+}
+
+/**
+ * enables/disables autosell for an item type
+ */
+void SavedGame::setAutosell(const RuleItem *itype, const bool enabled)
+{
+	if (enabled)
+	{
+		_autosales.insert(itype);
+	}
+	else
+	{
+		_autosales.erase(itype);
+	}
+}
+/**
+ * get autosell state for an item type
+ */
+bool SavedGame::getAutosell(const RuleItem *itype) const
+{
+	if (!Options::oxceAutoSell)
+	{
+		return false;
+	}
+	return _autosales.find(itype) != _autosales.end();
+}
+
+/**
+ * Removes all soldiers from a given craft.
+ */
+void SavedGame::removeAllSoldiersFromXcomCraft(Craft *craft)
+{
+	for (auto base : _bases)
+	{
+		for (auto soldier : *base->getSoldiers())
+		{
+			if (soldier->getCraft() == craft)
+			{
+				soldier->setCraft(0);
+			}
+		}
+	}
+}
+
+/**
+ * Stop hunting the given xcom craft.
+ */
+void SavedGame::stopHuntingXcomCraft(Craft *target)
+{
+	for (std::vector<Ufo*>::iterator u = _ufos.begin(); u != _ufos.end(); ++u)
+	{
+		(*u)->resetOriginalDestination(target);
+	}
+}
+
+/**
+ * Stop hunting all xcom craft from a given xcom base.
+ */
+void SavedGame::stopHuntingXcomCrafts(Base *base)
+{
+	for (std::vector<Craft*>::iterator c = base->getCrafts()->begin(); c != base->getCrafts()->end(); ++c)
+	{
+		for (std::vector<Ufo*>::iterator u = _ufos.begin(); u != _ufos.end(); ++u)
+		{
+			(*u)->resetOriginalDestination((*c));
+		}
+	}
 }
 
 }

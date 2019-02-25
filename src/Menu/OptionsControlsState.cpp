@@ -34,7 +34,9 @@ namespace OpenXcom
  */
 OptionsControlsState::OptionsControlsState(OptionsOrigin origin) : OptionsBaseState(origin), _selected(-1), _selKey(0)
 {
+#if !defined(__MOBILE__) && !defined(__PSEUDO_ANDROID__)
 	setCategory(_btnControls);
+#endif
 
 	// Create objects
 	_lstControls = new TextList(200, 136, 94, 8);
@@ -83,6 +85,10 @@ OptionsControlsState::OptionsControlsState(OptionsOrigin origin) : OptionsBaseSt
 			{
 				_controlsBattle.push_back(*i);
 			}
+			else if (i->category() == "STR_OXCE")
+			{
+				_controlsOxce.push_back(*i);
+			}
 		}
 	}
 }
@@ -112,6 +118,10 @@ void OptionsControlsState::init()
 	_lstControls->addRow(2, tr("STR_BATTLESCAPE").c_str(), "");
 	_lstControls->setCellColor(_controlsGeneral.size() + 2 + _controlsGeo.size() + 2, 0, _colorGroup);
 	addControls(_controlsBattle);
+	_lstControls->addRow(2, "", "");
+	_lstControls->addRow(2, tr("STR_OXCE").c_str(), "");
+	_lstControls->setCellColor(_controlsGeneral.size() + 2 + _controlsGeo.size() + 2 + _controlsBattle.size() + 2, 0, _colorGroup);
+	addControls(_controlsOxce);
 }
 
 /**
@@ -144,7 +154,7 @@ void OptionsControlsState::addControls(const std::vector<OptionInfo> &keys)
 	for (std::vector<OptionInfo>::const_iterator i = keys.begin(); i != keys.end(); ++i)
 	{
 		std::string name = tr(i->description());
-		SDLKey *key = i->asKey();
+		SDL_Keycode *key = i->asKey();
 		std::string keyName = ucWords(SDL_GetKeyName(*key));
 		if (*key == SDLK_UNKNOWN)
 			keyName = "";
@@ -173,6 +183,11 @@ OptionInfo *OptionsControlsState::getControl(size_t sel)
 			 sel <= _controlsGeneral.size() + 2 + _controlsGeo.size() + 2 + _controlsBattle.size())
 	{
 		return &_controlsBattle[sel - 1 - _controlsGeneral.size() - 2 - _controlsGeo.size() - 2];
+	}
+	else if (sel > _controlsGeneral.size() + 2 + _controlsGeo.size() + 2 + _controlsBattle.size() + 2 &&
+		sel <= _controlsGeneral.size() + 2 + _controlsGeo.size() + 2 + _controlsBattle.size() + 2 + _controlsOxce.size())
+	{
+		return &_controlsOxce[sel - 1 - _controlsGeneral.size() - 2 - _controlsGeo.size() - 2 - _controlsBattle.size() - 2];
 	}
 	else
 	{
@@ -230,8 +245,10 @@ void OptionsControlsState::lstControlsKeyPress(Action *action)
 {
 	if (_selected != -1)
 	{
-		SDLKey key = action->getDetails()->key.keysym.sym;
-		if (key != 0)
+		SDL_Keycode key = action->getDetails()->key.keysym.sym;
+		if (key != 0 &&
+			key != SDLK_LSHIFT && key != SDLK_LALT && key != SDLK_LCTRL &&
+			key != SDLK_RSHIFT && key != SDLK_RALT && key != SDLK_RCTRL)
 		{
 			*_selKey->asKey() = key;
 			std::string name = ucWords(SDL_GetKeyName(*_selKey->asKey()));

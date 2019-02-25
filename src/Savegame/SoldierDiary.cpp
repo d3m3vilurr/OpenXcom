@@ -22,6 +22,7 @@
 #include "../Mod/Mod.h"
 #include "BattleUnitStatistics.h"
 #include "MissionStatistics.h"
+#include <algorithm>
 
 namespace OpenXcom
 {
@@ -265,9 +266,12 @@ std::vector<SoldierCommendations*> *SoldierDiary::getSoldierCommendations()
 bool SoldierDiary::manageCommendations(Mod *mod, std::vector<MissionStatistics*> *missionStatistics)
 {
 	const int BATTLE_TYPES = 13;
-	const int DAMAGE_TYPES = 11;
-	const std::string battleTypeArray[BATTLE_TYPES] = { "BT_NONE", "BT_FIREARM", "BT_AMMO", "BT_MELEE", "BT_GRENADE",	"BT_PROXIMITYGRENADE", "BT_MEDIKIT", "BT_SCANNER", "BT_MINDPROBE", "BT_PSIAMP", "BT_FLARE", "BT_CORPSE", "BT_END" };
-	const std::string damageTypeArray[DAMAGE_TYPES] = { "DT_NONE", "DT_AP", "DT_IN", "DT_HE", "DT_LASER", "DT_PLASMA", "DT_STUN", "DT_MELEE", "DT_ACID", "DT_SMOKE", "DT_END"};
+	const std::string battleTypeArray[BATTLE_TYPES] = { "BT_NONE", "BT_FIREARM", "BT_AMMO", "BT_MELEE", "BT_GRENADE",
+		"BT_PROXIMITYGRENADE", "BT_MEDIKIT", "BT_SCANNER", "BT_MINDPROBE", "BT_PSIAMP", "BT_FLARE", "BT_CORPSE", "BT_END" };
+	const int DAMAGE_TYPES = 21;
+	const std::string damageTypeArray[DAMAGE_TYPES] = { "DT_NONE", "DT_AP", "DT_IN", "DT_HE", "DT_LASER", "DT_PLASMA",
+		"DT_STUN", "DT_MELEE", "DT_ACID", "DT_SMOKE",
+		"DT_10", "DT_11", "DT_12", "DT_13", "DT_14", "DT_15", "DT_16", "DT_17", "DT_18", "DT_19", "DT_END" };
 
 	const std::map<std::string, RuleCommendations *> commendationsList = mod->getCommendationsList();
 	bool awardedCommendation = false;                   // This value is returned if at least one commendation was given.
@@ -460,8 +464,6 @@ bool SoldierDiary::manageCommendations(Mod *mod, std::vector<MissionStatistics*>
 							for (std::vector<std::string>::const_iterator detail = andCriteria->second.begin(); detail != andCriteria->second.end(); ++detail)
 							{
 								int battleType = 0;
-								int damageType = 0;
-
 								for (; battleType != BATTLE_TYPES; ++battleType)
 								{
 									if ((*detail) == battleTypeArray[battleType])
@@ -470,6 +472,7 @@ bool SoldierDiary::manageCommendations(Mod *mod, std::vector<MissionStatistics*>
 									}
 								}
 
+								int damageType = 0;
 								for (; damageType != DAMAGE_TYPES; ++damageType)
 								{
 									if ((*detail) == damageTypeArray[damageType])
@@ -486,7 +489,7 @@ bool SoldierDiary::manageCommendations(Mod *mod, std::vector<MissionStatistics*>
 									 (*singleKill)->weapon != (*detail) && (*singleKill)->weaponAmmo != (*detail) &&
 									 (*singleKill)->getUnitStatusString() != (*detail) && (*singleKill)->getUnitFactionString() != (*detail) &&
 									 (*singleKill)->getUnitSideString() != (*detail) && (*singleKill)->getUnitBodyPartString() != (*detail) &&
-									 weaponAmmo->getDamageType() != damageType && weapon->getBattleType() != battleType))
+									 weaponAmmo->getDamageType()->ResistType != damageType && weapon->getBattleType() != battleType))
 								{
 									foundMatch = false;
 									break;
@@ -514,10 +517,10 @@ bool SoldierDiary::manageCommendations(Mod *mod, std::vector<MissionStatistics*>
 							break;
 						}
 					} /// End of AND loop.
-				  if (andCriteriaMet)
-				    break; // Stop looking, becuase we _are_ getting one, regardless of what's in the next OR block.
-				} /// End of OR loop.
-
+					if (andCriteriaMet)
+						break; // Stop looking, becuase we _are_ getting one, regardless of what's in the next OR block.
+				} /// End of OR loop. 
+				
 				if (!andCriteriaMet)
 					awardCommendationBool = false;
 

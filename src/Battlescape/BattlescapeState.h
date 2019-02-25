@@ -47,29 +47,36 @@ class BattlescapeGame;
 class BattlescapeState : public State
 {
 private:
-	Surface *_rank;
+	Surface *_rank, *_rankTiny;
 	InteractiveSurface *_icons;
 	Map *_map;
 	BattlescapeButton *_btnUnitUp, *_btnUnitDown, *_btnMapUp, *_btnMapDown, *_btnShowMap, *_btnKneel;
 	BattlescapeButton *_btnInventory, *_btnCenter, *_btnNextSoldier, *_btnNextStop, *_btnShowLayers, *_btnHelp;
-	BattlescapeButton *_btnEndTurn, *_btnAbort, *_btnLaunch, *_btnPsi, *_reserve;
+	BattlescapeButton *_btnEndTurn, *_btnAbort, *_btnLaunch, *_btnPsi, *_btnSpecial, *_reserve;
 	InteractiveSurface *_btnStats;
 	BattlescapeButton *_btnReserveNone, *_btnReserveSnap, *_btnReserveAimed, *_btnReserveAuto, *_btnReserveKneel, *_btnZeroTUs;
 	InteractiveSurface *_btnLeftHandItem, *_btnRightHandItem;
 	static const int VISIBLE_MAX = 10;
+	std::string _txtVisibleUnitTooltip[VISIBLE_MAX+2];
 	InteractiveSurface *_btnVisibleUnit[VISIBLE_MAX];
 	NumberText *_numVisibleUnit[VISIBLE_MAX];
 	BattleUnit *_visibleUnit[VISIBLE_MAX];
 	WarningMessage *_warning;
 	Text *_txtName;
-	NumberText *_numTimeUnits, *_numEnergy, *_numHealth, *_numMorale, *_numLayers, *_numAmmoLeft, *_numAmmoRight;
+	NumberText *_numTimeUnits, *_numEnergy, *_numHealth, *_numMorale, *_numLayers;
+	std::vector<NumberText*> _numAmmoLeft, _numAmmoRight;
+	std::vector<NumberText*> _numMedikitLeft, _numMedikitRight;
+	NumberText *_numTwoHandedIndicatorLeft, *_numTwoHandedIndicatorRight;
+	Uint8 _twoHandedRed, _twoHandedGreen;
 	Bar *_barTimeUnits, *_barEnergy, *_barHealth, *_barMorale;
 	Timer *_animTimer, *_gameTimer;
 	SavedBattleGame *_save;
 	Text *_txtDebug, *_txtTooltip;
+	Uint8 _tooltipDefaultColor;
+	Uint8 _medikitRed, _medikitGreen, _medikitBlue, _medikitOrange;
 	std::vector<State*> _popups;
 	BattlescapeGame *_battleGame;
-	bool _firstInit;
+	bool _firstInit, _paletteResetNeeded, _paletteResetRequested;
 	bool _isMouseScrolling, _isMouseScrolled;
 	int _xBeforeMouseScrolling, _yBeforeMouseScrolling;
 	Position _mapOffsetBeforeMouseScrolling;
@@ -78,17 +85,34 @@ private:
 	bool _mouseMovedOverThreshold;
 	bool _mouseOverIcons;
 	std::string _currentTooltip;
+	float _scrollAccumX, _scrollAccumY;
 	Position _cursorPosition;
 	Uint8 _barHealthColor;
 	bool _autosave;
+	int _numberOfDirectlyVisibleUnits, _numberOfEnemiesTotal, _numberOfEnemiesTotalPlusWounded;
+	Uint8 _indicatorTextColor, _indicatorGreen, _indicatorBlue, _indicatorPurple;
+	bool _hasScrolled;
+	bool _swipeFromSoldier;
+	bool _multiGestureProcess;
 	/// Popups a context sensitive list of actions the user can choose from.
-	void handleItemClick(BattleItem *item);
+	void handleItemClick(BattleItem *item, bool rightClick);
 	/// Shifts the red colors of the visible unit buttons backgrounds.
 	void blinkVisibleUnitButtons();
+	/// Draw hand item with ammo number.
+	void drawItem(BattleItem *item, Surface *hand, std::vector<NumberText*> &ammoText, std::vector<NumberText*> &medikitText, NumberText *twoHandedText);
+	/// Draw both hands sprites.
+	void drawHandsItems();
 	/// Shifts the colors of the health bar when unit has fatal wounds.
 	void blinkHealthBar();
 	/// Shows the unit kneel state.
 	void toggleKneelButton(BattleUnit* unit);
+#ifdef __MOBILE__
+	// Scalers for touchscreen
+	float _mouseXScale, _mouseYScale;
+	Surface *_leftWpnActive, *_rightWpnActive;
+	// Timer for long-tapping the screen
+	Timer *_longPressTimer;
+#endif
 public:
 	/// Selects the next soldier.
 	void selectNextPlayerUnit(bool checkReselect = false, bool setReselect = false, bool checkInventory = false, bool checkFOV = true);
@@ -99,18 +123,28 @@ public:
 	BattlescapeState();
 	/// Cleans up the Battlescape state.
 	~BattlescapeState();
+	void resetPalettes();
 	/// Initializes the battlescapestate.
-	void init();
+	void init() override;
 	/// Runs the timers and handles popups.
-	void think();
+	void think() override;
 	/// Handler for moving mouse over the map.
 	void mapOver(Action *action);
 	/// Handler for pressing the map.
 	void mapPress(Action *action);
+	void mapRelease(Action *action);
 	/// Handler for clicking the map.
 	void mapClick(Action *action);
 	/// Handler for entering with mouse to the map surface.
 	void mapIn(Action *action);
+	void fingerMotion(Action *action);
+	void multiGesture(Action *action);
+	/// Handler for buttons
+	void mapKey(Action *action);
+#ifdef __MOBILE__
+	/// Handler for long presses
+	void mapLongPress();
+#endif
 	/// Handler for clicking the Unit Up button.
 	void btnUnitUpClick(Action *action);
 	/// Handler for clicking the Unit Down button.
@@ -135,6 +169,8 @@ public:
 	void btnPrevSoldierClick(Action *action);
 	/// Handler for clicking the Show Layers button.
 	void btnShowLayersClick(Action *action);
+	/// Handler for clicking the Ufopaedia button.
+	void btnUfopaediaClick(Action *action);
 	/// Handler for clicking the Help button.
 	void btnHelpClick(Action *action);
 	/// Handler for clicking the End Turn button.
@@ -153,12 +189,18 @@ public:
 	void btnLaunchClick(Action *action);
 	/// Handler for clicking the use psi button.
 	void btnPsiClick(Action *action);
+	/// Handler for clicking the use special weapon button.
+	void btnSpecialClick(Action *action);
 	/// Handler for clicking a reserved button.
 	void btnReserveClick(Action *action);
 	/// Handler for clicking the reload button.
 	void btnReloadClick(Action *action);
+	/// Handler for clicking the [SelectMusicTrack] button.
+	void btnSelectMusicTrackClick(Action *action);
 	/// Handler for clicking the lighting button.
 	void btnPersonalLightingClick(Action *action);
+	/// Handler for toggling the "night vision" mode.
+	void btnNightVisionClick(Action *action);
 	/// Determines whether a playable unit is selected.
 	bool playableUnitSelected();
 	/// Updates soldier name/rank/tu/energy/health/morale.
@@ -175,10 +217,14 @@ public:
 	Map *getMap() const;
 	/// Show debug message.
 	void debug(const std::string &message);
+	/// Show bug hunt message.
+	void bugHuntMessage();
 	/// Show warning message.
 	void warning(const std::string &message);
+	/// Gets melee damage preview.
+	std::string getMeleeDamagePreview(BattleUnit *actor, BattleItem *weapon) const;
 	/// Handles keypresses.
-	void handle(Action *action);
+	void handle(Action *action) override;
 	/// Displays a popup window.
 	void popup(State *state);
 	/// Finishes a battle.
@@ -187,6 +233,8 @@ public:
 	void showLaunchButton(bool show);
 	/// Shows the PSI button.
 	void showPsiButton(bool show);
+	/// Shows the special weapon button.
+	void showSpecialButton(bool show, int sprite = 1);
 	/// Clears mouse-scrolling state.
 	void clearMouseScrollingState();
 	/// Returns a pointer to the battlegame, in case we need its functions.
@@ -209,16 +257,35 @@ public:
 	void btnReserveKneelClick(Action *action);
 	/// Handler for clicking the expend all TUs button.
 	void btnZeroTUsClick(Action *action);
+#ifdef __MOBILE__
+	/// Handler for pressing the expend all TUs button.
+	void btnZeroTUsPress(Action *action);
+	/// Handler for releasing the expend all TUs button.
+	void btnZeroTUsRelease(Action *action);
+	/// Handler for long-pressing the expend all TUs button.
+	void btnZeroTUsLongPress();
+#endif
 	/// Handler for showing tooltip.
 	void txtTooltipIn(Action *action);
+	/// Handler for showing tooltip with extra information (used for medikit-type equipment)
+	void txtTooltipInExtra(Action *action, bool leftHand, bool special = false);
+	void txtTooltipInExtraLeftHand(Action *action);
+	void txtTooltipInExtraRightHand(Action *action);
+	void txtTooltipInExtraSpecial(Action *action);
+	/// Handler for showing tooltip with extra information (about current turn)
+	void txtTooltipInEndTurn(Action *action);
 	/// Handler for hiding tooltip.
 	void txtTooltipOut(Action *action);
 	/// Update the resolution settings, we just resized the window.
-	void resize(int &dX, int &dY);
+	void resize(int &dX, int &dY) override;
+
+	bool hasScrolled() const;
 	/// Move the mouse back to where it started after we finish drag scrolling.
 	void stopScrolling(Action *action);
 	/// Autosave next turn.
 	void autosave();
+	/// Don't do anything and consume the event.
+	void consumeEvent(Action *action);
 };
 
 }

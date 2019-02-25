@@ -20,6 +20,7 @@
 #include <sstream>
 #include <locale>
 #include <stdexcept>
+#include <algorithm>
 #include "Logger.h"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -75,6 +76,7 @@ void getUtf8Locale()
 	// Try a UTF-8 locale (or default if none was found)
 	try
 	{
+		Log(LOG_INFO) << "Attempted locale: " << loc.c_str();
 		utf8 = std::locale(loc.c_str());
 	}
 	catch (const std::runtime_error &)
@@ -181,6 +183,25 @@ std::string convWcToMb(const std::wstring &src, unsigned int cp)
 	std::string str(size, 0);
 	WideCharToMultiByte(cp, 0, &src[0], (int)src.size(), &str[0], size, NULL, NULL);
 	return str;
+#elif defined(__CYGWIN__)
+	(void)cp;
+	assert(sizeof(wchar_t) == sizeof(Uint16));
+	UString ustr(src.size(), 0);
+    std::transform(src.begin(), src.end(), ustr.begin(),
+		[](wchar_t c) -> UCode
+		{
+			//TODO: droping surrogates, do proper implemetation when someone will need that range
+			if (c <= 0xD7FF || c >= 0xE000)
+			{
+				return c;
+			}
+			else
+			{
+				return '?';
+			}
+		}
+	);
+	return convUtf32ToUtf8(ustr);
 #else
 	(void)cp;
 	assert(sizeof(wchar_t) == sizeof(UCode));
@@ -206,6 +227,27 @@ std::wstring convMbToWc(const std::string &src, unsigned int cp)
 	std::wstring wstr(size, 0);
 	MultiByteToWideChar(cp, 0, &src[0], (int)src.size(), &wstr[0], size);
 	return wstr;
+#elif defined(__CYGWIN__)
+	(void)cp;
+	assert(sizeof(wchar_t) == sizeof(Uint16));
+	const UString ustr = convUtf8ToUtf32(src);
+
+	std::wstring wstr(ustr.size(), 0);
+    std::transform(ustr.begin(), ustr.end(), wstr.begin(),
+		[](UCode c) -> wchar_t
+		{
+			//TODO: droping surrogates, do proper implemetation when someone will need that range
+			if (c <= 0xD7FF || (c >= 0xE000 && c <= 0xFFFF))
+			{
+				return c;
+			}
+			else
+			{
+				return '?';
+			}
+		}
+	);
+	return wstr;
 #else
 	(void)cp;
 	assert(sizeof(wchar_t) == sizeof(UCode));
@@ -216,35 +258,54 @@ std::wstring convMbToWc(const std::string &src, unsigned int cp)
 }
 
 /**
- * Takes a filesystem path and converts it to a UTF-8 string.
- * On Windows the C paths use the local ANSI codepage.
- * Used for SDL APIs.
- * @param src Filesystem path.
- * @return UTF-8 string.
+ * Checks if UTF-8 string is well-formed.
+ * @param ss candidate string
+ * @return true if valid
+ * @note based on https://www.cl.cam.ac.uk/~mgk25/ucs/utf8_check.c
  */
-std::string convPathToUtf8(const std::string &src)
-{
-#ifdef _WIN32
-	return convWcToMb(convMbToWc(src, CP_ACP), CP_UTF8);
-#else
-	return src;
-#endif
-}
-
-/**
- * Takes a UTF-8 string and converts it to a filesystem path.
- * On Windows the C paths use the local ANSI codepage.
- * Used for SDL APIs.
- * @param src UTF-8 string.
- * @return Filesystem path.
- */
-std::string convUtf8ToPath(const std::string &src)
-{
-#ifdef _WIN32
-	return convWcToMb(convMbToWc(src, CP_UTF8), CP_ACP);
-#else
-	return src;
-#endif
+bool isValidUTF8(const std::string& ss) {
+	std::basic_string<unsigned char> s((unsigned char *)ss.c_str());
+	s.append(4, 0); // we need to slap 4 bytes on the end of s or we can overrun it
+	size_t i = 0;
+	while ((i < ss.length()) && (s[i] != 0)) {
+		if (s[i] < 0x80) {
+			/* 0xxxxxxx */
+			i++;
+		} else if ((s[i+0] & 0xe0) == 0xc0) {
+			/* 110XXXXx 10xxxxxx */
+			if ((s[i+1] & 0xc0) != 0x80 || (s[i+0] & 0xfe) == 0xc0)	{	/* overlong? */
+				return false;
+			} else {
+				i += 2;
+			}
+		} else if ((s[i] & 0xf0) == 0xe0) {
+			/* 1110XXXX 10Xxxxxx 10xxxxxx */
+			if ((s[i+1] & 0xc0) != 0x80 ||
+				(s[i+2] & 0xc0) != 0x80 ||
+				(s[i+0] == 0xe0 && (s[i+1] & 0xe0) == 0x80) ||		/* overlong? */
+				(s[i+0] == 0xed && (s[i+1] & 0xe0) == 0xa0) ||		/* surrogate? */
+				(s[i+0] == 0xef && s[i+1] == 0xbf &&
+				(s[i+2] & 0xfe) == 0xbe)) {							/* U+FFFE or U+FFFF? */
+					return false;
+			} else {
+				i += 3;
+			}
+		} else if ((s[0] & 0xf8) == 0xf0) {
+			/* 11110XXX 10XXxxxx 10xxxxxx 10xxxxxx */
+			if ((s[i+1] & 0xc0) != 0x80 ||
+				(s[i+2] & 0xc0) != 0x80 ||
+				(s[i+3] & 0xc0) != 0x80 ||
+				(s[i+0] == 0xf0 && (s[i+1] & 0xf0) == 0x80) ||		/* overlong? */
+				(s[i+0] == 0xf4 && s[i+1] > 0x8f) || s[i+0] > 0xf4) { 	/* > U+10FFFF? */
+					return false;
+			} else {
+				i += 4;
+			}
+		} else {
+			return false;
+		}
+	}
+	return true;
 }
 
 /**

@@ -28,6 +28,7 @@ namespace OpenXcom
 class SavedBattleGame;
 class Tile;
 class BattleUnit;
+struct BattleActionCost;
 
 /**
  * A utility class that calculates the shortest path between two points on the battlescape map.
@@ -35,6 +36,11 @@ class BattleUnit;
 class Pathfinding
 {
 private:
+	constexpr static int dir_max = 10;
+	constexpr static int dir_x[dir_max] = {  0, +1, +1, +1,  0, -1, -1, -1,  0,  0};
+	constexpr static int dir_y[dir_max] = { -1, -1,  0, +1, +1, +1,  0, -1,  0,  0};
+	constexpr static int dir_z[dir_max] = {  0,  0,  0,  0,  0,  0,  0,  0, +1, -1};
+
 	SavedBattleGame *_save;
 	std::vector<PathfindingNode> _nodes;
 	int _size;
@@ -61,7 +67,7 @@ public:
 	/// Determines whether the unit is going up a stairs.
 	bool isOnStairs(Position startPosition, Position endPosition) const;
 	/// Determines whether or not movement between starttile and endtile is possible in the direction.
-	bool isBlocked(Tile *startTile, Tile *endTile, const int direction, BattleUnit *missileTarget);
+	bool isBlockedDirection(Tile *startTile, const int direction, BattleUnit *missileTarget);
 	static const int DIR_UP = 8;
 	static const int DIR_DOWN = 9;
 	enum bigWallTypes{ BLOCK = 1, BIGWALLNESW, BIGWALLNWSE, BIGWALLWEST, BIGWALLNORTH, BIGWALLEAST, BIGWALLSOUTH, BIGWALLEASTANDSOUTH, BIGWALLWESTANDNORTH};
@@ -75,10 +81,36 @@ public:
 	~Pathfinding();
 	/// Calculates the shortest path.
 	void calculate(BattleUnit *unit, Position endPosition, BattleUnit *missileTarget = 0, int maxTUCost = 1000);
-	/// Converts direction to a vector.
-	static void directionToVector(int direction, Position *vector);
-	/// Converts a vector to a direction.
-	static void vectorToDirection(Position vector, int &dir);
+
+	/**
+	 * Converts direction to a vector. Direction starts north = 0 and goes clockwise.
+	 * @param direction Source direction.
+	 * @param vector Pointer to a position (which acts as a vector).
+	 */
+	static void directionToVector(int direction, Position *vector)
+	{
+		vector->x = dir_x[direction];
+		vector->y = dir_y[direction];
+		vector->z = dir_z[direction];
+	}
+
+	/**
+	 * Converts direction to a vector. Direction starts north = 0 and goes clockwise.
+	 * @param vector Pointer to a position (which acts as a vector).
+	 * @param dir Resulting direction.
+	 */
+	static void vectorToDirection(const Position &vector, int &dir)
+	{
+		dir = -1;
+		for (int i = 0; i < 8; ++i)
+		{
+			if (dir_x[i] == vector.x && dir_y[i] == vector.y)
+			{
+				dir = i;
+				return;
+			}
+		}
+	}
 	/// Checks whether a path is ready and gives the first direction.
 	int getStartDirection() const;
 	/// Dequeues a direction.
@@ -98,7 +130,7 @@ public:
 	/// Sets _unit in order to abuse low-level pathfinding functions from outside the class.
 	void setUnit(BattleUnit *unit);
 	/// Gets all reachable tiles, based on cost.
-	std::vector<int> findReachable(BattleUnit *unit, int tuMax);
+	std::vector<int> findReachable(BattleUnit *unit, const BattleActionCost &cost);
 	/// Gets _totalTUCost; finds out whether we can hike somewhere in this turn or not.
 	int getTotalTUCost() const { return _totalTUCost; }
 	/// Gets the path preview setting.

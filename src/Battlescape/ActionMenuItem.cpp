@@ -121,7 +121,7 @@ int ActionMenuItem::getTUs() const
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void ActionMenuItem::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void ActionMenuItem::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	_frame->setPalette(colors, firstcolor, ncolors);
@@ -135,10 +135,10 @@ void ActionMenuItem::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
  */
 void ActionMenuItem::draw()
 {
-	_frame->blit(this);
-	_txtDescription->blit(this);
-	_txtAcc->blit(this);
-	_txtTU->blit(this);
+	_frame->blit(this->getSurface());
+	_txtDescription->blit(this->getSurface());
+	_txtAcc->blit(this->getSurface());
+	_txtTU->blit(this->getSurface());
 }
 
 /**

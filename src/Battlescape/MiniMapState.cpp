@@ -59,7 +59,7 @@ MiniMapState::MiniMapState (Camera * camera, SavedBattleGame * battleGame)
 	battleGame->setPaletteByDepth(this);
 
 	add(_bg);
-	_game->getMod()->getSurface("SCANBORD.PCK")->blit(_bg);
+	_game->getMod()->getSurface("SCANBORD.PCK")->blitNShade(_bg, 0, 0);
 	add(_miniMapView);
 	add(_btnLvlUp, "buttonUp", "minimap", _bg);
 	add(_btnLvlDwn, "buttonDown", "minimap", _bg);
@@ -103,13 +103,13 @@ MiniMapState::~MiniMapState()
 void MiniMapState::handle(Action *action)
 {
 	State::handle(action);
-	if (action->getDetails()->type == SDL_MOUSEBUTTONDOWN)
+	if (action->getDetails()->type == SDL_MOUSEWHEEL)
 	{
-		if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP)
+		if (action->getDetails()->wheel.y > 0)
 		{
 			btnLevelUpClick(action);
 		}
-		else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN)
+		else
 		{
 			btnLevelDownClick(action);
 		}

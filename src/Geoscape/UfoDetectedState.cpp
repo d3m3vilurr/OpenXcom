@@ -19,6 +19,7 @@
 #include "UfoDetectedState.h"
 #include <sstream>
 #include "../Engine/Game.h"
+#include "../Engine/Sound.h"
 #include "../Mod/Mod.h"
 #include "../Engine/LocalizedText.h"
 #include "../Interface/TextButton.h"
@@ -49,10 +50,12 @@ namespace OpenXcom
  */
 UfoDetectedState::UfoDetectedState(Ufo *ufo, GeoscapeState *state, bool detected, bool hyperwave) : _ufo(ufo), _state(state)
 {
+	bool firstTime = false;
 	// Generate UFO ID
 	if (_ufo->getId() == 0)
 	{
 		_ufo->setId(_game->getSavedGame()->getId("STR_UFO"));
+		firstTime = true;
 	}
 	if (_ufo->getAltitude() == "STR_GROUND" && _ufo->getLandId() == 0)
 	{
@@ -118,9 +121,20 @@ UfoDetectedState::UfoDetectedState(Ufo *ufo, GeoscapeState *state, bool detected
 	_btnCentre->setText(tr("STR_CENTER_ON_UFO_TIME_5_SECONDS"));
 	_btnCentre->onMouseClick((ActionHandler)&UfoDetectedState::btnCentreClick);
 
-	_btnCancel->setText(tr("STR_CANCEL_UC"));
+	if (SDL_GetModState() & KMOD_CTRL)
+	{
+		_btnCancel->setText(tr("STR_CANCEL_AND_IGNORE_UC"));
+	}
+	else
+	{
+		_btnCancel->setText(tr("STR_CANCEL_UC"));
+	}
 	_btnCancel->onMouseClick((ActionHandler)&UfoDetectedState::btnCancelClick);
 	_btnCancel->onKeyboardPress((ActionHandler)&UfoDetectedState::btnCancelClick, Options::keyCancel);
+	_btnCancel->onKeyboardPress((ActionHandler)&UfoDetectedState::toggleCancel, SDLK_LCTRL);
+	_btnCancel->onKeyboardRelease((ActionHandler)&UfoDetectedState::toggleCancel, SDLK_LCTRL);
+	_btnCancel->onKeyboardPress((ActionHandler)&UfoDetectedState::toggleCancel, SDLK_RCTRL);
+	_btnCancel->onKeyboardRelease((ActionHandler)&UfoDetectedState::toggleCancel, SDLK_RCTRL);
 
 	if (detected)
 	{
@@ -192,6 +206,12 @@ UfoDetectedState::UfoDetectedState(Ufo *ufo, GeoscapeState *state, bool detected
 	ss.str("");
 	ss << Unicode::TOK_COLOR_FLIP << tr(_ufo->getMission()->getRegion());
 	_lstInfo2->addRow(2, tr("STR_ZONE").c_str(), ss.str().c_str());
+
+	if (firstTime && _ufo->getRules()->getAlertSound() > -1)
+	{
+		_game->getMod()->getSound("GEO.CAT", _ufo->getRules()->getAlertSound())->play();
+		_soundPlayed = true;
+	}
 }
 
 /**
@@ -230,7 +250,28 @@ void UfoDetectedState::btnCentreClick(Action *)
  */
 void UfoDetectedState::btnCancelClick(Action *)
 {
+	if (SDL_GetModState() & KMOD_CTRL)
+	{
+		// don't show UFO Detected window for this UFO anymore
+		_game->getSavedGame()->addUfoToIgnoreList(_ufo->getId());
+	}
 	_game->popState();
+}
+
+/**
+ * Toggles Cancel button.
+ * @param action Pointer to an action.
+ */
+void UfoDetectedState::toggleCancel(Action *)
+{
+	if (SDL_GetModState() & KMOD_CTRL)
+	{
+		_btnCancel->setText(tr("STR_CANCEL_AND_IGNORE_UC"));
+	}
+	else
+	{
+		_btnCancel->setText(tr("STR_CANCEL_UC"));
+	}
 }
 
 }

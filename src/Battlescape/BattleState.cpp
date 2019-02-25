@@ -39,7 +39,7 @@ BattleState::BattleState(BattlescapeGame *parent) : _parent(parent)
 {
 	_action.result = "";
 	_action.targeting = false;
-	_action.TU = 0;
+	_action.clearTU();
 }
 
 
@@ -55,6 +55,14 @@ BattleState::~BattleState()
  * Start the current BattleState.
  */
 void BattleState::init()
+{
+
+}
+
+/**
+ * Call when state get popout.
+ */
+void BattleState::deinit()
 {
 
 }
@@ -80,7 +88,7 @@ void BattleState::think()
  * Gets the action result. Returns error messages or an empty string when everything went fine.
  * @return Error or empty string when everything is fine.
  */
-BattleAction BattleState::getAction() const
+const BattleAction& BattleState::getAction() const
 {
 	return _action;
 }

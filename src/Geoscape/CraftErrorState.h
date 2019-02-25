@@ -41,7 +41,7 @@ private:
 	Text *_txtMessage;
 public:
 	/// Creates the Craft Error state.
-	CraftErrorState(GeoscapeState *state, const std::string &msg);
+	CraftErrorState(GeoscapeState *state, const std::string &msg, bool enableHotkeys = true);
 	/// Cleans up the Craft Error state.
 	~CraftErrorState();
 	/// Handler for clicking the OK button.

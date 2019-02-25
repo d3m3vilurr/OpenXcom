@@ -93,7 +93,7 @@ void WarningMessage::initText(Font *big, Font *small, Language *lang)
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void WarningMessage::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void WarningMessage::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	_text->setPalette(colors, firstcolor, ncolors);
@@ -141,7 +141,7 @@ void WarningMessage::draw()
 {
 	Surface::draw();
 	drawRect(0, 0, getWidth(), getHeight(), _color + (_fade > 12 ? 12 : _fade));
-	_text->blit(this);
+	_text->blit(this->getSurface());
 }
 
 }

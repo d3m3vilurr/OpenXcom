@@ -33,6 +33,7 @@ class Timer;
 class Target;
 class LocalizedText;
 class RuleGlobe;
+class Craft;
 
 /**
  * Interactive globe view of the world.
@@ -46,6 +47,7 @@ private:
 	static const int NUM_LANDSHADES = 48;
 	static const int NUM_SEASHADES = 72;
 	static const int NEAR_RADIUS = 25;
+	static const int MAX_DRAW_RADAR_CIRCLE_RADIUS = 10000;
 	static const size_t DOGFIGHT_ZOOM = 3;
 	static const int CITY_MARKER = 8;
 	static const double ROTATE_LONGITUDE;
@@ -121,8 +123,8 @@ public:
 	void polarToCart(double lon, double lat, Sint16 *x, Sint16 *y) const;
 	/// Converts polar coordinates to cartesian coordinates.
 	void polarToCart(double lon, double lat, double *x, double *y) const;
-	/// Converts cartesian coordinates to polar coordinates.
-	void cartToPolar(Sint16 x, Sint16 y, double *lon, double *lat) const;
+	/// Converts cartesian coordinates to polar coordinates. Returns false if conversion is not possible.
+	bool cartToPolar(Sint16 x, Sint16 y, double *lon, double *lat) const;
 	/// Starts rotating the globe left.
 	void rotateLeft();
 	/// Starts rotating the globe right.
@@ -160,19 +162,19 @@ public:
 	/// Turns on/off the globe detail.
 	void toggleDetail();
 	/// Gets all the targets near a point on the globe.
-	std::vector<Target*> getTargets(int x, int y, bool craft) const;
+	std::vector<Target*> getTargets(int x, int y, bool craft, Craft *currentCraft) const;
 	/// Caches visible globe polygons.
 	void cachePolygons();
 	/// Sets the palette of the globe.
-	void setPalette(SDL_Color *colors, int firstcolor = 0, int ncolors = 256);
+	void setPalette(const SDL_Color *colors, int firstcolor = 0, int ncolors = 256) override;
 	/// Handles the timers.
-	void think();
+	void think() override;
 	/// Blinks the markers.
 	void blink();
 	/// Rotates the globe.
 	void rotate();
 	/// Draws the whole globe.
-	void draw();
+	void draw() override;
 	/// Draws the ocean of the globe.
 	void drawOcean();
 	/// Draws the land of the globe.
@@ -188,17 +190,19 @@ public:
 	/// Draws all the markers over the globe.
 	void drawMarkers();
 	/// Blits the globe onto another surface.
-	void blit(Surface *surface);
+	void blit(SDL_Surface *surface) override;
 	/// Special handling for mouse hover.
-	void mouseOver(Action *action, State *state);
+	void mouseOver(Action *action, State *state) override;
 	/// Special handling for mouse presses.
-	void mousePress(Action *action, State *state);
+	void mousePress(Action *action, State *state) override;
 	/// Special handling for mouse releases.
-	void mouseRelease(Action *action, State *state);
+	void mouseRelease(Action *action, State *state) override;
+	/// Special handling for mouse wheel.
+	void mouseWheel(Action *action, State *state) override;
 	/// Special handling for mouse clicks.
-	void mouseClick(Action *action, State *state);
+	void mouseClick(Action *action, State *state) override;
 	/// Special handling for key presses.
-	void keyboardPress(Action *action, State *state);
+	void keyboardPress(Action *action, State *state) override;
 	/// Get the polygons texture and shade at the given point.
 	void getPolygonTextureAndShade(double lon, double lat, int *texture, int *shade) const;
 	/// Sets hover base position.
@@ -213,6 +217,8 @@ public:
 	void resize();
 	/// Move the mouse back to where it started after we finish drag scrolling.
 	void stopScrolling(Action *action);
+	/// Special handling for multifinger gestures
+	void multiGesture(Action *action, State *state) override;
 };
 
 }

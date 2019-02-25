@@ -45,12 +45,12 @@ namespace OpenXcom
  * @param unit Dying unit.
  * @param damageType Type of damage that caused the death.
  * @param noSound Whether to disable the death sound.
- * @param noCorpse Whether to disable the corpse spawn.
  */
-UnitDieBState::UnitDieBState(BattlescapeGame *parent, BattleUnit *unit, ItemDamageType damageType, bool noSound, bool noCorpse) : BattleState(parent), _unit(unit), _damageType(damageType), _noSound(noSound), _noCorpse(noCorpse), _extraFrame(0)
+UnitDieBState::UnitDieBState(BattlescapeGame *parent, BattleUnit *unit, const RuleDamageType* damageType, bool noSound) : BattleState(parent),
+	_unit(unit), _damageType(damageType), _noSound(noSound), _extraFrame(0), _overKill(unit->getOverKillDamage())
 {
 	// don't show the "fall to death" animation when a unit is blasted with explosives or he is already unconscious
-	if (_damageType == DT_HE || _unit->getStatus() == STATUS_UNCONSCIOUS)
+	if (!_damageType->isDirect() || _unit->getStatus() == STATUS_UNCONSCIOUS)
 	{
 
 		/********************************************************
@@ -74,10 +74,7 @@ UnitDieBState::UnitDieBState(BattlescapeGame *parent, BattleUnit *unit, ItemDama
 		}
 		if (_parent->getSave()->isBeforeGame())
 		{
-			if (!noCorpse)
-			{
-				convertUnitToCorpse();
-			}
+			convertUnitToCorpse();
 			_extraFrame = 3; // shortcut to popState()
 		}
 	}
@@ -135,7 +132,7 @@ void UnitDieBState::think()
 		_parent->popState();
 		return;
 	}
-	if (_unit->getDirection() != 3 && _damageType != DT_HE)
+	if (_unit->getDirection() != 3 && _damageType->isDirect())
 	{
 		int dir = _unit->getDirection() + 1;
 		if (dir == 8)
@@ -172,14 +169,15 @@ void UnitDieBState::think()
 	if (_extraFrame == 2)
 	{
 		_parent->getMap()->setUnitDying(false);
-		_parent->getTileEngine()->calculateUnitLighting();
+		_parent->getTileEngine()->calculateLighting(LL_ITEMS, _unit->getPosition(), _unit->getArmor()->getSize());
+		_parent->getTileEngine()->calculateFOV(_unit->getPosition(), _unit->getArmor()->getSize(), false); //Update FOV for anyone that can see me
 		_parent->popState();
 		if (_unit->getOriginalFaction() == FACTION_PLAYER)
 		{
 			Game *game = _parent->getSave()->getBattleState()->getGame();
 			if (_unit->getStatus() == STATUS_DEAD)
 			{
-				if (_damageType == DT_NONE && _unit->getSpawnUnit().empty())
+				if (_damageType->ResistType == DT_NONE && _unit->getSpawnUnit().empty())
 				{
 					game->pushState(new InfoboxOKState(game->getLanguage()->getString("STR_HAS_DIED_FROM_A_FATAL_WOUND", _unit->getGender()).arg(_unit->getName(game->getLanguage()))));
 				}
@@ -206,7 +204,7 @@ void UnitDieBState::think()
 	else if (_unit->isOut())
 	{
 		_extraFrame = 1;
-		if (!_noSound && _damageType == DT_HE && _unit->getStatus() != STATUS_UNCONSCIOUS)
+		if (!_noSound && !_damageType->isDirect() && _unit->getStatus() != STATUS_UNCONSCIOUS)
 		{
 			playDeathSound();
 		}
@@ -218,12 +216,19 @@ void UnitDieBState::think()
 		{
 			_unit->setTurnsSinceSpotted(255);
 		}
-		if (!_unit->getSpawnUnit().empty())
+		if (_unit->getTurnsLeftSpottedForSnipers() != 0)
 		{
-			// converts the dead zombie to a chryssalid
-			_parent->convertUnit(_unit);
+			_unit->setTurnsLeftSpottedForSnipers(0);
 		}
-		else if (!_noCorpse)
+		if (!_unit->getSpawnUnit().empty() && !_overKill)
+		{
+			if (!_unit->getAlreadyRespawned())
+			{
+				// converts the dead zombie to a chryssalid
+				_parent->convertUnit(_unit);
+			}
+		}
+		else
 		{
 			convertUnitToCorpse();
 		}
@@ -233,7 +238,6 @@ void UnitDieBState::think()
 		}
 	}
 
-	_parent->getMap()->cacheUnit(_unit);
 }
 
 /**
@@ -257,70 +261,58 @@ void UnitDieBState::convertUnitToCorpse()
 	if (!_noSound)
 	{
 		_parent->getSave()->getBattleState()->showPsiButton(false);
+		_parent->getSave()->getBattleState()->showSpecialButton(false);
 	}
 	// remove the unconscious body item corresponding to this unit, and if it was being carried, keep track of what slot it was in
-	if (lastPosition != Position(-1,-1,-1))
+	if (lastPosition != TileEngine::invalid)
 	{
 		_parent->getSave()->removeUnconsciousBodyItem(_unit);
 	}
 
 	// move inventory from unit to the ground
-	if (dropItems)
+	if (dropItems && _unit->getTile())
 	{
-		std::vector<BattleItem*> itemsToKeep;
-		for (std::vector<BattleItem*>::iterator i = _unit->getInventory()->begin(); i != _unit->getInventory()->end(); ++i)
-		{
-			_parent->dropItem(lastPosition, (*i));
-			if (!(*i)->getRules()->isFixed())
-			{
-				(*i)->setOwner(0);
-			}
-			else
-			{
-				itemsToKeep.push_back(*i);
-			}
-		}
-
-		_unit->getInventory()->clear();
-
-		for (std::vector<BattleItem*>::iterator i = itemsToKeep.begin(); i != itemsToKeep.end(); ++i)
-		{
-			_unit->getInventory()->push_back(*i);
-		}
+		_parent->getTileEngine()->itemDropInventory(_unit->getTile(), _unit);
 	}
 
 	// remove unit-tile link
-	_unit->setTile(0);
+	_unit->setTile(nullptr, _parent->getSave());
 
-	if (lastPosition == Position(-1,-1,-1)) // we're being carried
+	if (lastPosition == TileEngine::invalid) // we're being carried
 	{
-		// replace the unconscious body item with a corpse in the carrying unit's inventory
-		for (std::vector<BattleItem*>::iterator it = _parent->getSave()->getItems()->begin(); it != _parent->getSave()->getItems()->end(); )
+		if (_overKill)
 		{
-			if ((*it)->getUnit() == _unit)
+			_parent->getSave()->removeUnconsciousBodyItem(_unit);
+		}
+		else
+		{
+			// replace the unconscious body item with a corpse in the carrying unit's inventory
+			for (std::vector<BattleItem*>::iterator it = _parent->getSave()->getItems()->begin(); it != _parent->getSave()->getItems()->end(); )
 			{
-				RuleItem *corpseRules = _parent->getMod()->getItem(_unit->getArmor()->getCorpseBattlescape()[0], true); // we're in an inventory, so we must be a 1x1 unit
-				(*it)->convertToCorpse(corpseRules);
-				break;
+				if ((*it)->getUnit() == _unit)
+				{
+					RuleItem *corpseRules = _parent->getMod()->getItem(_unit->getArmor()->getCorpseBattlescape()[0], true); // we're in an inventory, so we must be a 1x1 unit
+					(*it)->convertToCorpse(corpseRules);
+					break;
+				}
+				++it;
 			}
-			++it;
 		}
 	}
 	else
 	{
-		int i = size * size - 1;
-		for (int y = size - 1; y >= 0; --y)
+		if (!_overKill)
 		{
-			for (int x = size - 1; x >= 0; --x)
+			int i = size * size - 1;
+			for (int y = size - 1; y >= 0; --y)
 			{
-				BattleItem *corpse = new BattleItem(_parent->getMod()->getItem(_unit->getArmor()->getCorpseBattlescape()[i], true), _parent->getSave()->getCurrentItemId());
-				corpse->setUnit(_unit);
-				if (_parent->getSave()->getTile(lastPosition + Position(x,y,0))->getUnit() == _unit) // check in case unit was displaced by another unit
+				for (int x = size - 1; x >= 0; --x)
 				{
-					_parent->getSave()->getTile(lastPosition + Position(x,y,0))->setUnit(0);
+					BattleItem *corpse = _parent->getSave()->createItemForTile(_unit->getArmor()->getCorpseBattlescape()[i], nullptr);
+					corpse->setUnit(_unit);
+					_parent->dropItem(lastPosition + Position(x,y,0), corpse, false);
+					--i;
 				}
-				_parent->dropItem(lastPosition + Position(x,y,0), corpse, true);
-				--i;
 			}
 		}
 	}

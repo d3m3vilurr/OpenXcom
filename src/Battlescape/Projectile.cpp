@@ -46,17 +46,13 @@ namespace OpenXcom
  * @param targetVoxel Position the projectile is targeting.
  * @param ammo the ammo that produced this projectile, where applicable.
  */
-Projectile::Projectile(Mod *mod, SavedBattleGame *save, BattleAction action, Position origin, Position targetVoxel, BattleItem *ammo) : _mod(mod), _save(save), _action(action), _origin(origin), _targetVoxel(targetVoxel), _position(0), _bulletSprite(-1), _reversed(false), _vaporColor(-1), _vaporDensity(-1), _vaporProbability(5)
+Projectile::Projectile(Mod *mod, SavedBattleGame *save, BattleAction action, Position origin, Position targetVoxel, BattleItem *ammo) : _mod(mod), _save(save), _action(action), _origin(origin), _targetVoxel(targetVoxel), _position(0), _distance(0.0f), _bulletSprite(-1), _reversed(false), _vaporColor(-1), _vaporDensity(-1), _vaporProbability(5)
 {
 	// this is the number of pixels the sprite will move between frames
 	_speed = Options::battleFireSpeed;
 	if (_action.weapon)
 	{
-		if (_action.type == BA_THROW)
-		{
-			_sprite = _mod->getSurfaceSet("FLOOROB.PCK")->getFrame(getItem()->getRules()->getFloorSprite());
-		}
-		else
+		if (_action.type != BA_THROW)
 		{
 			// try to get all the required info from the ammo, if present
 			if (ammo)
@@ -122,14 +118,15 @@ int Projectile::calculateTrajectory(double accuracy, const Position& originVoxel
 	Tile *targetTile = _save->getTile(_action.target);
 	BattleUnit *bu = _action.actor;
 
+	_distance = 0.0f;
 	int test;
 	if (excludeUnit)
 	{
-		test = _save->getTileEngine()->calculateLine(originVoxel, _targetVoxel, false, &_trajectory, bu);
+		test = _save->getTileEngine()->calculateLineVoxel(originVoxel, _targetVoxel, false, &_trajectory, bu);
 	}
 	else
 	{
-		test = _save->getTileEngine()->calculateLine(originVoxel, _targetVoxel, false, &_trajectory, 0);
+		test = _save->getTileEngine()->calculateLineVoxel(originVoxel, _targetVoxel, false, &_trajectory, nullptr);
 	}
 
 	if (test != V_EMPTY &&
@@ -138,9 +135,10 @@ int Projectile::calculateTrajectory(double accuracy, const Position& originVoxel
 		_action.autoShotCounter == 1 &&
 		((SDL_GetModState() & KMOD_CTRL) == 0 || !Options::forceFire) &&
 		_save->getBattleGame()->getPanicHandled() &&
-		_action.type != BA_LAUNCH)
+		_action.type != BA_LAUNCH &&
+		!_action.sprayTargeting)
 	{
-		Position hitPos = Position(_trajectory.at(0).x/16, _trajectory.at(0).y/16, _trajectory.at(0).z/24);
+		Position hitPos = _trajectory.at(0).toTile();
 		if (test == V_UNIT && _save->getTile(hitPos) && _save->getTile(hitPos)->getUnit() == 0) //no unit? must be lower
 		{
 			hitPos = Position(hitPos.x, hitPos.y, hitPos.z-1);
@@ -205,7 +203,7 @@ int Projectile::calculateTrajectory(double accuracy, const Position& originVoxel
 	applyAccuracy(originVoxel, &_targetVoxel, accuracy, false, extendLine);
 
 	// finally do a line calculation and store this trajectory.
-	return _save->getTileEngine()->calculateLine(originVoxel, _targetVoxel, true, &_trajectory, bu);
+	return _save->getTileEngine()->calculateLineVoxel(originVoxel, _targetVoxel, true, &_trajectory, bu);
 }
 
 /**
@@ -221,7 +219,7 @@ int Projectile::calculateThrow(double accuracy)
 	Position targetVoxel;
 	std::vector<Position> targets;
 	double curvature;
-	targetVoxel = _action.target * Position(16,16,24) + Position(8,8, (1 + -targetTile->getTerrainLevel()));
+	targetVoxel = _action.target.toVoxel() + Position(8,8, (1 + -targetTile->getTerrainLevel()));
 	targets.clear();
 	bool forced = false;
 
@@ -231,12 +229,10 @@ int Projectile::calculateThrow(double accuracy)
 	}
 	else
 	{
-		BattleUnit *tu = targetTile->getUnit();
-		if (!tu && _action.target.z > 0 && targetTile->hasNoFloor(0))
-			tu = _save->getTile(_action.target - Position(0, 0, 1))->getUnit();
+		BattleUnit *tu = targetTile->getOverlappingUnit(_save);
 		if (Options::forceFire && (SDL_GetModState() & KMOD_CTRL) != 0 && _save->getSide() == FACTION_PLAYER)
 		{
-			targets.push_back(_action.target * Position(16,16,24) + Position(0, 0, 12));
+			targets.push_back(_action.target.toVoxel() + Position(0, 0, 12));
 			forced = true;
 		}
 		else if (tu && ((_action.actor->getFaction() != FACTION_PLAYER) ||
@@ -249,7 +245,7 @@ int Projectile::calculateThrow(double accuracy)
 		}
 		else if (targetTile->getMapData(O_OBJECT) != 0)
 		{
-			targetVoxel = _action.target * Position(16,16,24) + Position(8,8,0);
+			targetVoxel = _action.target.toVoxel() + Position(8,8,0);
 			targets.push_back(targetVoxel + Position(0, 0, 13));
 			targets.push_back(targetVoxel + Position(0, 0, 8));
 			targets.push_back(targetVoxel + Position(0, 0, 23));
@@ -257,7 +253,7 @@ int Projectile::calculateThrow(double accuracy)
 		}
 		else if (targetTile->getMapData(O_NORTHWALL) != 0)
 		{
-			targetVoxel = _action.target * Position(16,16,24) + Position(8,0,0);
+			targetVoxel = _action.target.toVoxel() + Position(8,0,0);
 			targets.push_back(targetVoxel + Position(0, 0, 13));
 			targets.push_back(targetVoxel + Position(0, 0, 8));
 			targets.push_back(targetVoxel + Position(0, 0, 20));
@@ -265,7 +261,7 @@ int Projectile::calculateThrow(double accuracy)
 		}
 		else if (targetTile->getMapData(O_WESTWALL) != 0)
  		{
-			targetVoxel = _action.target * Position(16,16,24) + Position(0,8,0);
+			targetVoxel = _action.target.toVoxel() + Position(0,8,0);
 			targets.push_back(targetVoxel + Position(0, 0, 13));
 			targets.push_back(targetVoxel + Position(0, 0, 8));
 			targets.push_back(targetVoxel + Position(0, 0, 20));
@@ -277,6 +273,7 @@ int Projectile::calculateThrow(double accuracy)
 		}
 	}
 
+	_distance = 0.0f;
 	int test = V_OUTOFBOUNDS;
 	for (std::vector<Position>::iterator i = targets.begin(); i != targets.end(); ++i)
 	{
@@ -305,9 +302,9 @@ int Projectile::calculateThrow(double accuracy)
 			applyAccuracy(originVoxel, &targetVoxel, accuracy, true, false); //arcing shot deviation
 			deltas = Position(0,0,0);
 		}
-		test = _save->getTileEngine()->calculateParabola(originVoxel, targetVoxel, true, &_trajectory, _action.actor, curvature, deltas);
+		test = _save->getTileEngine()->calculateParabolaVoxel(originVoxel, targetVoxel, true, &_trajectory, _action.actor, curvature, deltas);
 		if (forced) return O_OBJECT; //fake hit
-		Position endPoint = _trajectory.back() / Position (16, 16, 24);
+		Position endPoint = _trajectory.back().toTile();
 		Tile *endTile = _save->getTile(endPoint);
 		// check if the item would land on a tile with a blocking object
 		if (_action.type == BA_THROW
@@ -338,7 +335,7 @@ void Projectile::applyAccuracy(Position origin, Position *target, double accurac
 	// maxRange is the maximum range a projectile shall ever travel in voxel space
 	double maxRange = keepRange?realDistance:16*1000; // 1000 tiles
 	maxRange = _action.type == BA_HIT?46:maxRange; // up to 2 tiles diagonally (as in the case of reaper v reaper)
-	RuleItem *weapon = _action.weapon->getRules();
+	const RuleItem *weapon = _action.weapon->getRules();
 
 	if (_action.type != BA_THROW && _action.type != BA_HIT)
 	{
@@ -381,6 +378,33 @@ void Projectile::applyAccuracy(Position origin, Position *target, double accurac
 		zShift = xyShift / 2 + zDist;
 	else
 		zShift = xyShift + zDist / 2;
+
+	// Apply penalty for having no LOS to target
+	int noLOSAccuracyPenalty = _action.weapon->getRules()->getNoLOSAccuracyPenalty(_mod);
+	if (noLOSAccuracyPenalty != -1)
+	{
+		Tile *t = _save->getTile(target->toTile());
+		if (t)
+		{
+			bool hasLOS = false;
+			BattleUnit *bu = _action.actor;
+			BattleUnit *targetUnit = t->getOverlappingUnit(_save);
+
+			if (targetUnit)
+			{
+				hasLOS = _save->getTileEngine()->visible(bu, t);
+			}
+			else
+			{
+				hasLOS = _save->getTileEngine()->isTileInLOS(&_action, t);
+			}
+
+			if (!hasLOS)
+			{
+				accuracy = accuracy * noLOSAccuracyPenalty / 100;
+			}
+		}
+	}
 
 	int deviation = RNG::generate(0, 100) - (accuracy * 100);
 
@@ -426,6 +450,12 @@ bool Projectile::move()
 		{
 			_position--;
 			return false;
+		}
+		else if (_position > 0)
+		{
+			Position p = _trajectory[_position] - _trajectory[_position - 1];
+			p *= p;
+			_distance += sqrt(float(p.x + p.y + p.z));
 		}
 		if (_save->getDepth() > 0 && _vaporColor != -1 && _action.type != BA_THROW && RNG::percent(_vaporProbability))
 		{
@@ -476,15 +506,6 @@ BattleItem *Projectile::getItem() const
 }
 
 /**
- * Gets the bullet sprite.
- * @return Pointer to Surface.
- */
-Surface *Projectile::getSprite() const
-{
-	return _sprite;
-}
-
-/**
  * Skips to the end of the trajectory.
  */
 void Projectile::skipTrajectory()
@@ -500,7 +521,7 @@ Position Projectile::getOrigin() const
 {
 	// instead of using the actor's position, we'll use the voxel origin translated to a tile position
 	// this is a workaround for large units.
-	return _trajectory.front() / Position(16,16,24);
+	return _trajectory.front().toTile();
 }
 
 /**
@@ -512,6 +533,15 @@ Position Projectile::getOrigin() const
 Position Projectile::getTarget() const
 {
 	return _action.target;
+}
+
+/**
+ * Gets distances that projectile have traveled until now.
+ * @return Returns traveled distance.
+ */
+float Projectile::getDistance() const
+{
+	return _distance;
 }
 
 /**
@@ -528,11 +558,11 @@ bool Projectile::isReversed() const
  */
 void Projectile::addVaporCloud()
 {
-	Tile *tile = _save->getTile(_trajectory.at(_position) / Position(16,16,24));
+	Tile *tile = _save->getTile(_trajectory.at(_position).toTile());
 	if (tile)
 	{
 		Position tilePos, voxelPos;
-		_save->getBattleGame()->getMap()->getCamera()->convertMapToScreen(_trajectory.at(_position) / Position(16,16,24), &tilePos);
+		_save->getBattleGame()->getMap()->getCamera()->convertMapToScreen(_trajectory.at(_position).toTile(), &tilePos);
 		tilePos += _save->getBattleGame()->getMap()->getCamera()->getMapOffset();
 		_save->getBattleGame()->getMap()->getCamera()->convertVoxelToScreen(_trajectory.at(_position), &voxelPos);
 		for (int i = 0; i != _vaporDensity; ++i)

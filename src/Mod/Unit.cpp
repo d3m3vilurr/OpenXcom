@@ -18,6 +18,7 @@
  */
 #include "Unit.h"
 #include "../Engine/Exception.h"
+#include "../Engine/ScriptBind.h"
 #include "Mod.h"
 
 namespace OpenXcom
@@ -27,7 +28,12 @@ namespace OpenXcom
  * Creates a certain type of unit.
  * @param type String defining the type.
  */
-Unit::Unit(const std::string &type) : _type(type), _standHeight(0), _kneelHeight(0), _floatHeight(0), _value(0), _aggroSound(-1), _moveSound(-1), _intelligence(0), _aggression(0), _energyRecovery(30), _specab(SPECAB_NONE), _livingWeapon(false), _psiWeapon("ALIEN_PSI_WEAPON"), _capturable(true)
+Unit::Unit(const std::string &type) :
+	_type(type), _showFullNameInAlienInventory(-1), _standHeight(0), _kneelHeight(0), _floatHeight(0), _value(0),
+	_moraleLossWhenKilled(100), _aggroSound(-1), _moveSound(-1), _intelligence(0), _aggression(0),
+	_spotter(0), _sniper(0), _energyRecovery(30), _specab(SPECAB_NONE), _livingWeapon(false),
+	_psiWeapon("ALIEN_PSI_WEAPON"), _capturable(true), _canSurrender(false), _autoSurrender(false),
+	_isLeeroyJenkins(false), _waitIfOutsideWeaponRange(false), _pickUpWeaponsMoreActively(-1)
 {
 }
 
@@ -46,11 +52,17 @@ Unit::~Unit()
  */
 void Unit::load(const YAML::Node &node, Mod *mod)
 {
+	if (const YAML::Node &parent = node["refNode"])
+	{
+		load(parent, mod);
+	}
 	_type = node["type"].as<std::string>(_type);
+	_civilianRecoveryType = node["civilianRecoveryType"].as<std::string>(_civilianRecoveryType);
 	_race = node["race"].as<std::string>(_race);
+	_showFullNameInAlienInventory = node["showFullNameInAlienInventory"].as<int>(_showFullNameInAlienInventory);
 	_rank = node["rank"].as<std::string>(_rank);
 	_stats.merge(node["stats"].as<UnitStats>(_stats));
-	_armor = node["armor"].as<std::string>(_armor);
+	_armorName = node["armor"].as<std::string>(_armorName);
 	_standHeight = node["standHeight"].as<int>(_standHeight);
 	_kneelHeight = node["kneelHeight"].as<int>(_kneelHeight);
 	_floatHeight = node["floatHeight"].as<int>(_floatHeight);
@@ -59,12 +71,20 @@ void Unit::load(const YAML::Node &node, Mod *mod)
 		throw Exception("Error with unit "+ _type +": Unit height may not exceed 25");
 	}
 	_value = node["value"].as<int>(_value);
+	_moraleLossWhenKilled = node["moraleLossWhenKilled"].as<int>(_moraleLossWhenKilled);
 	_intelligence = node["intelligence"].as<int>(_intelligence);
 	_aggression = node["aggression"].as<int>(_aggression);
+	_spotter = node["spotter"].as<int>(_spotter);
+	_sniper = node["sniper"].as<int>(_sniper);
 	_energyRecovery = node["energyRecovery"].as<int>(_energyRecovery);
 	_specab = (SpecialAbility)node["specab"].as<int>(_specab);
 	_spawnUnit = node["spawnUnit"].as<std::string>(_spawnUnit);
 	_livingWeapon = node["livingWeapon"].as<bool>(_livingWeapon);
+	_canSurrender = node["canSurrender"].as<bool>(_canSurrender);
+	_autoSurrender = node["autoSurrender"].as<bool>(_autoSurrender);
+	_isLeeroyJenkins = node["isLeeroyJenkins"].as<bool>(_isLeeroyJenkins);
+	_waitIfOutsideWeaponRange = node["waitIfOutsideWeaponRange"].as<bool>(_waitIfOutsideWeaponRange);
+	_pickUpWeaponsMoreActively = node["pickUpWeaponsMoreActively"].as<int>(_pickUpWeaponsMoreActively);
 	_meleeWeapon = node["meleeWeapon"].as<std::string>(_meleeWeapon);
 	_psiWeapon = node["psiWeapon"].as<std::string>(_psiWeapon);
 	_capturable = node["capturable"].as<bool>(_capturable);
@@ -99,6 +119,14 @@ void Unit::load(const YAML::Node &node, Mod *mod)
 }
 
 /**
+ * Cross link with other rules
+ */
+void Unit::afterLoad(const Mod* mod)
+{
+	_armor = mod->getArmor(_armorName, true);
+}
+
+/**
  * Returns the language string that names
  * this unit. Each unit type has a unique name.
  * @return The unit's name.
@@ -106,6 +134,15 @@ void Unit::load(const YAML::Node &node, Mod *mod)
 std::string Unit::getType() const
 {
 	return _type;
+}
+
+/**
+* Gets the type of staff (soldier/engineer/scientists) or type of item to be recovered when a civilian is saved.
+* @return The type of staff/item to recover.
+*/
+std::string Unit::getCivilianRecoveryType() const
+{
+	return _civilianRecoveryType;
 }
 
 /**
@@ -148,7 +185,7 @@ int Unit::getFloatHeight() const
  * Gets the unit's armor type.
  * @return The unit's armor type.
  */
-std::string Unit::getArmor() const
+Armor* Unit::getArmor() const
 {
 	return _armor;
 }
@@ -217,6 +254,25 @@ int Unit::getAggression() const
 }
 
 /**
+ * Gets the spotter score. Determines how many turns sniper AI units can act on this unit seeing your troops.
+ * @return The unit's spotter value.
+ */
+int Unit::getSpotterDuration() const
+{
+	// Lazy balance - use -1 to make this the same as intelligence value
+	return (_spotter == -1) ? _intelligence : _spotter;
+}
+
+/**
+ * Gets the sniper score. Determines the chances of firing from out of LOS on spotted units.
+ * @return The unit's sniper value.
+ */
+int Unit::getSniperPercentage() const
+{
+	return _sniper;
+}
+
+/**
  * Gets the unit's special ability.
  * @return The unit's specab.
  */
@@ -267,7 +323,7 @@ bool Unit::isLivingWeapon() const
  * What is this unit's built in melee weapon (if any).
  * @return the name of the weapon.
  */
-std::string Unit::getMeleeWeapon() const
+const std::string &Unit::getMeleeWeapon() const
 {
 	return _meleeWeapon;
 }
@@ -276,7 +332,7 @@ std::string Unit::getMeleeWeapon() const
 * What is this unit's built in psi weapon (if any).
 * @return the name of the weapon.
 */
-std::string Unit::getPsiWeapon() const
+const std::string &Unit::getPsiWeapon() const
 {
 	return _psiWeapon;
 }
@@ -303,4 +359,63 @@ bool Unit::getCapturable() const
 	return _capturable;
 }
 
+/**
+* Checks if this unit can surrender.
+* @return True if this unit can surrender.
+*/
+bool Unit::canSurrender() const
+{
+	return _canSurrender || _autoSurrender;
 }
+
+/**
+* Checks if this unit surrenders automatically, if all other units surrendered too.
+* @return True if this unit auto-surrenders.
+*/
+bool Unit::autoSurrender() const
+{
+	return _autoSurrender;
+}
+
+/**
+ * Should the unit try to pick up weapons more actively?
+ * @return True if the unit prefers picking up a weapon over most of other actions.
+ */
+bool Unit::pickUpWeaponsMoreActively(Mod *mod) const
+{
+	if (_pickUpWeaponsMoreActively != -1)
+	{
+		return _pickUpWeaponsMoreActively == 0 ? false : true;
+	}
+	return mod->getAIPickUpWeaponsMoreActively();
+}
+
+/**
+ * Should alien inventory show full name (e.g. Sectoid Leader) or just the race (e.g. Sectoid)?
+ * @return True if full name can be shown.
+ */
+bool Unit::getShowFullNameInAlienInventory(Mod *mod) const
+{
+	if (_showFullNameInAlienInventory != -1)
+	{
+		return _showFullNameInAlienInventory == 0 ? false : true;
+	}
+	return mod->getShowFullNameInAlienInventory();
+}
+
+////////////////////////////////////////////////////////////
+//					Script binding
+////////////////////////////////////////////////////////////
+
+/**
+ * Register StatAdjustment in script parser.
+ * @param parser Script parser.
+ */
+void StatAdjustment::ScriptRegister(ScriptParserBase* parser)
+{
+	Bind<StatAdjustment> sa = { parser };
+
+	UnitStats::addGetStatsScript<StatAdjustment, &StatAdjustment::statGrowth>(sa, "", true);
+}
+
+} // namespace OpenXcom

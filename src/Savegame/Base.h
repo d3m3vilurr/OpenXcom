@@ -25,8 +25,7 @@
 namespace OpenXcom
 {
 
-class Mod;
-class BaseFacility;
+class RuleCraft;
 class Soldier;
 class Craft;
 class ItemContainer;
@@ -34,9 +33,12 @@ class Transfer;
 class Language;
 class Mod;
 class SavedGame;
+class RuleBaseFacility;
+class BaseFacility;
 class ResearchProject;
 class Production;
 class Vehicle;
+class Ufo;
 
 /**
  * Represents a player base on the globe.
@@ -58,6 +60,7 @@ private:
 	bool _inBattlescape;
 	bool _retaliationTarget;
 	std::vector<Vehicle*> _vehicles;
+	std::vector<Vehicle*> _vehiclesFromBase;
 	std::vector<BaseFacility*> _defenses;
 
 	/// Determines space taken up by ammo clips about to rearm craft.
@@ -71,14 +74,16 @@ public:
 	~Base();
 	/// Loads the base from YAML.
 	void load(const YAML::Node& node, SavedGame *save, bool newGame, bool newBattleGame = false);
+	/// Finishes loading the base (more specifically all craft in the base) from YAML.
+	void finishLoading(const YAML::Node& node, SavedGame *save);
 	/// Saves the base to YAML.
-	YAML::Node save() const;
+	YAML::Node save() const override;
 	/// Gets the base's type.
-	std::string getType() const;
+	std::string getType() const override;
 	/// Gets the base's name.
-	std::string getName(Language *lang = 0) const;
+	std::string getName(Language *lang = 0) const override;
 	/// Gets the base's marker sprite.
-	int getMarker() const;
+	int getMarker() const override;
 	/// Gets the base's facilities.
 	std::vector<BaseFacility*> *getFacilities();
 	/// Gets the base's soldiers.
@@ -102,7 +107,7 @@ public:
 	/// Checks if a target is inside the base's radar range.
 	int insideRadarRange(Target *target) const;
 	/// Gets the base's available soldiers.
-	int getAvailableSoldiers(bool checkCombatReadiness = false) const;
+	int getAvailableSoldiers(bool checkCombatReadiness = false, bool includeWounded = false) const;
 	/// Gets the base's total soldiers.
 	int getTotalSoldiers() const;
 	/// Gets the base's available scientists.
@@ -113,6 +118,10 @@ public:
 	int getAvailableEngineers() const;
 	/// Gets the base's total engineers.
 	int getTotalEngineers() const;
+	/// Gets the base's total other employees.
+	int getTotalOtherEmployees() const;
+	/// Gets the base's total cost of other employees.
+	int getTotalOtherEmployeeCost() const;
 	/// Gets the base's used living quarters.
 	int getUsedQuarters() const;
 	/// Gets the base's available living quarters.
@@ -150,13 +159,17 @@ public:
 	/// Gets the base's long range detection.
 	int getLongRangeDetection() const;
 	/// Gets the base's crafts of a certain type.
-	int getCraftCount(const std::string &craft) const;
+	int getCraftCount(const RuleCraft *craft) const;
+	/// Gets the base's crafts of a certain type.
+	int getCraftCountForProduction(const RuleCraft *craft) const;
 	/// Gets the base's craft maintenance.
 	int getCraftMaintenance() const;
-	/// Gets the base's soldiers of a certain type.
-	int getSoldierCount(const std::string &soldier) const;
+	/// Gets the total count and total salary of soldiers of a certain type stored in the base.
+	std::pair<int, int> getSoldierCountAndSalary(const std::string &soldier) const;
 	/// Gets the base's personnel maintenance.
 	int getPersonnelMaintenance() const;
+	/// Gets the base's item maintenance.
+	int getItemMaintenance() const;
 	/// Gets the base's facility maintenance.
 	int getFacilityMaintenance() const;
 	/// Gets the base's total monthly maintenance.
@@ -181,12 +194,18 @@ public:
 	int getAvailablePsiLabs() const;
 	/// Gets the base's total free psi lab space.
 	int getFreePsiLabs() const;
+	/// Gets the base's used training space.
+	int getUsedTraining() const;
+	/// Gets the base's total available training space.
+	int getAvailableTraining() const;
+	/// Gets the base's total free training space.
+	int getFreeTrainingSpace() const;
 	/// Gets the amount of free Containment space.
-	int getFreeContainment() const;
+	int getFreeContainment(int prisonType) const;
 	/// Gets the total amount of Containment space.
-	int getAvailableContainment() const;
+	int getAvailableContainment(int prisonType) const;
 	/// Gets the total amount of used Containment space.
-	int getUsedContainment() const;
+	int getUsedContainment(int prisonType) const;
 	/// Sets the craft's battlescape status.
 	void setInBattlescape(bool inbattle);
 	/// Gets if the craft is in battlescape.
@@ -205,6 +224,10 @@ public:
 	std::vector<BaseFacility*> *getDefenses();
 	/// Gets the base's vehicles.
 	std::vector<Vehicle*> *getVehicles();
+	/// Damage and/or destroy facilities after a missile impact.
+	void damageFacilities(Ufo *ufo);
+	/// Damage a given facility.
+	int damageFacility(BaseFacility *toBeDamaged);
 	/// Destroys all disconnected facilities in the base.
 	void destroyDisconnectedFacilities();
 	/// Gets a sorted list of the facilities(=iterators) NOT connected to the Access Lift.
@@ -213,6 +236,20 @@ public:
 	void destroyFacility(std::vector<BaseFacility*>::iterator facility);
 	/// Cleans up the defenses vector and optionally reclaims the tanks and their ammo.
 	void cleanupDefenses(bool reclaimItems);
+	/// Gets available base functionality.
+	std::vector<std::string> getProvidedBaseFunc(const BaseFacility *skip = 0) const;
+	/// Gets used base functionality.
+	std::vector<std::string> getRequireBaseFunc(const BaseFacility *skip = 0) const;
+	/// Gets forbiden base functionality.
+	std::vector<std::string> getForbiddenBaseFunc() const;
+	/// Gets future base functionality.
+	std::vector<std::string> getFutureBaseFunc() const;
+	/// Checks if it is possible to build another facility of a given type.
+	bool isMaxAllowedLimitReached(RuleBaseFacility *rule) const;
+	/// Gets the amount of additional HP healed in this base due to sick bay facilities (in absolute number).
+	float getSickBayAbsoluteBonus() const;
+	/// Gets the amount of additional HP healed in this base due to sick bay facilities (as percentage of max HP per soldier).
+	float getSickBayRelativeBonus() const;
 };
 
 }

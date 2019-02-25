@@ -33,13 +33,17 @@
 #include "../Savegame/Craft.h"
 #include "../Mod/RuleCraft.h"
 #include "../Savegame/CraftWeapon.h"
+#include "../Mod/Armor.h"
 #include "../Mod/RuleCraftWeapon.h"
 #include "../Savegame/Base.h"
 #include "../Savegame/SavedGame.h"
+#include "../Savegame/Vehicle.h"
 #include "CraftSoldiersState.h"
 #include "CraftWeaponsState.h"
 #include "CraftEquipmentState.h"
 #include "CraftArmorState.h"
+#include "CraftPilotsState.h"
+#include "../Ufopaedia/Ufopaedia.h"
 
 namespace OpenXcom
 {
@@ -61,45 +65,74 @@ CraftInfoState::CraftInfoState(Base *base, size_t craftId) : _base(base), _craft
 	{
 		_window = new Window(this, 320, 200, 0, 0, POPUP_NONE);
 	}
-	_btnOk = new TextButton(64, 24, 128, 168);
-	_btnW1 = new TextButton(24, 32, 14, 48);
-	_btnW2 = new TextButton(24, 32, 282, 48);
-	_btnCrew = new TextButton(64, 16, 14, 96);
-	_btnEquip = new TextButton(64, 16, 14, 120);
-	_btnArmor = new TextButton(64, 16, 14, 144);
+
+	_craft = _base->getCrafts()->at(_craftId);
+	_weaponNum = _craft->getRules()->getWeapons();
+	if (_weaponNum > RuleCraft::WeaponMax)
+		_weaponNum = RuleCraft::WeaponMax;
+
+	const int top = _weaponNum > 2 ? 42 : 64;
+	const int top_row = 41;
+	const int bottom = 125;
+	const int bottom_row = 17;
+	bool pilots = _craft->getRules()->getPilots() > 0;
+	_btnOk = new TextButton(pilots ? 218 : 288, 16, pilots ? 86 : 16, 176);
+	for(int i = 0; i < _weaponNum; ++i)
+	{
+		const int x = i % 2 ? 282 : 14;
+		const int y = top + (i / 2) * top_row;
+		_btnW[i] = new TextButton(24, 32, x, y);
+	}
+	_btnCrew = new TextButton(64, 16, 16, bottom);
+	_btnEquip = new TextButton(64, 16, 16, bottom + bottom_row);
+	_btnArmor = new TextButton(64, 16, 16, bottom + 2 * bottom_row);
+	_btnPilots = new TextButton(64, 16, 16, bottom + 3 * bottom_row);
 	_edtCraft = new TextEdit(this, 140, 16, 80, 8);
 	_txtDamage = new Text(100, 17, 14, 24);
+	_txtShield = new Text(100, 17, 120, 24);
 	_txtFuel = new Text(82, 17, 228, 24);
-	_txtW1Name = new Text(95, 16, 46, 48);
-	_txtW1Ammo = new Text(75, 24, 46, 64);
-	_txtW2Name = new Text(95, 16, 184, 48);
-	_txtW2Ammo = new Text(75, 24, 204, 64);
-	_sprite = new Surface(32, 40, 144, 52);
-	_weapon1 = new Surface(15, 17, 121, 63);
-	_weapon2 = new Surface(15, 17, 184, 63);
-	_crew = new Surface(220, 18, 85, 96);
-	_equip = new Surface(220, 18, 85, 121);
+	for(int i = 0; i < _weaponNum; ++i)
+	{
+		const int x = i % 2 ? 204 : 46;
+		const int y = top + (i / 2) * top_row;
+		const int d = i % 2 ? 20 : 0;
+		_txtWName[i] = new Text(95, 16, x - d, y);
+		_txtWAmmo[i] = new Text(75, 24, x, y + 16);
+	}
+	_sprite = new Surface(32, 40, 144, 56);
+	for(int i = 0; i < _weaponNum; ++i)
+	{
+		const int x = i % 2 ? 184 : 121;
+		const int y = top + 16 + (i / 2) * top_row;
+		_weapon[i] = new Surface(15, 17, x, y);
+	}
+	_crew = new Surface(220, 18, 85, bottom - 1);
+	_equip = new Surface(220, 18, 85, bottom + bottom_row);
 
 	// Set palette
 	setInterface("craftInfo");
 
 	add(_window, "window", "craftInfo");
 	add(_btnOk, "button", "craftInfo");
-	add(_btnW1, "button", "craftInfo");
-	add(_btnW2, "button", "craftInfo");
+	for(int i = 0; i < _weaponNum; ++i)
+	{
+		add(_btnW[i], "button", "craftInfo");
+	}
 	add(_btnCrew, "button", "craftInfo");
 	add(_btnEquip, "button", "craftInfo");
 	add(_btnArmor, "button", "craftInfo");
+	add(_btnPilots, "button", "craftInfo");
 	add(_edtCraft, "text1", "craftInfo");
 	add(_txtDamage, "text1", "craftInfo");
+	add(_txtShield, "text1", "craftInfo");
 	add(_txtFuel, "text1", "craftInfo");
-	add(_txtW1Name, "text2", "craftInfo");
-	add(_txtW1Ammo, "text3", "craftInfo");
-	add(_txtW2Name, "text2", "craftInfo");
-	add(_txtW2Ammo, "text3", "craftInfo");
+	for(int i = 0; i < _weaponNum; ++i)
+	{
+		add(_txtWName[i], "text2", "craftInfo");
+		add(_txtWAmmo[i], "text3", "craftInfo");
+		add(_weapon[i]);
+	}
 	add(_sprite);
-	add(_weapon1);
-	add(_weapon2);
 	add(_crew);
 	add(_equip);
 
@@ -111,12 +144,14 @@ CraftInfoState::CraftInfoState(Base *base, size_t craftId) : _base(base), _craft
 	_btnOk->setText(tr("STR_OK"));
 	_btnOk->onMouseClick((ActionHandler)&CraftInfoState::btnOkClick);
 	_btnOk->onKeyboardPress((ActionHandler)&CraftInfoState::btnOkClick, Options::keyCancel);
+	_btnOk->onKeyboardPress((ActionHandler)&CraftInfoState::btnUfopediaClick, Options::keyGeoUfopedia);
 
-	_btnW1->setText("1");
-	_btnW1->onMouseClick((ActionHandler)&CraftInfoState::btnW1Click);
-
-	_btnW2->setText("2");
-	_btnW2->onMouseClick((ActionHandler)&CraftInfoState::btnW2Click);
+	for(int i = 0; i < _weaponNum; ++i)
+	{
+		const char num[] = { char('1' + i), 0 };
+		_btnW[i]->setText(num);
+		_btnW[i]->onMouseClick((ActionHandler)&CraftInfoState::btnWClick);
+	}
 
 	_btnCrew->setText(tr("STR_CREW"));
 	_btnCrew->onMouseClick((ActionHandler)&CraftInfoState::btnCrewClick);
@@ -127,13 +162,18 @@ CraftInfoState::CraftInfoState(Base *base, size_t craftId) : _base(base), _craft
 	_btnArmor->setText(tr("STR_ARMOR"));
 	_btnArmor->onMouseClick((ActionHandler)&CraftInfoState::btnArmorClick);
 
+	_btnPilots->setText(tr("STR_PILOTS"));
+	_btnPilots->onMouseClick((ActionHandler)&CraftInfoState::btnPilotsClick);
+	_btnPilots->setVisible(pilots);
+
 	_edtCraft->setBig();
 	_edtCraft->setAlign(ALIGN_CENTER);
 	_edtCraft->onChange((ActionHandler)&CraftInfoState::edtCraftChange);
 
-	_txtW1Name->setWordWrap(true);
-
-	_txtW2Name->setWordWrap(true);
+	for(int i =0; i < _weaponNum; ++i)
+	{
+		_txtWName[i]->setWordWrap(true);
+	}
 }
 
 /**
@@ -152,15 +192,11 @@ void CraftInfoState::init()
 {
 	State::init();
 
-	_craft = _base->getCrafts()->at(_craftId);
-
 	_edtCraft->setText(_craft->getName(_game->getLanguage()));
 
 	_sprite->clear();
 	SurfaceSet *texture = _game->getMod()->getSurfaceSet("BASEBITS.PCK");
-	texture->getFrame(_craft->getRules()->getSprite() + 33)->setX(0);
-	texture->getFrame(_craft->getRules()->getSprite() + 33)->setY(0);
-	texture->getFrame(_craft->getRules()->getSprite() + 33)->blit(_sprite);
+	texture->getFrame(_craft->getRules()->getSprite() + 33)->blitNShade(_sprite, 0, 0);
 
 	std::ostringstream firlsLine;
 	firlsLine << tr("STR_DAMAGE_UC_").arg(Unicode::formatPercentage(_craft->getDamagePercentage()));
@@ -173,12 +209,31 @@ void CraftInfoState::init()
 
 	std::ostringstream secondLine;
 	secondLine << tr("STR_FUEL").arg(Unicode::formatPercentage(_craft->getFuelPercentage()));
-	if (_craft->getStatus() == "STR_REFUELLING" && _craft->getRules()->getMaxFuel() - _craft->getFuel() > 0)
+	if (_craft->getStatus() == "STR_REFUELLING" && _craft->getFuelMax() - _craft->getFuel() > 0)
 	{
-		int fuelHours = (int)ceil((double)(_craft->getRules()->getMaxFuel() - _craft->getFuel()) / _craft->getRules()->getRefuelRate() / 2.0);
+		int fuelHours = (int)ceil((double)(_craft->getFuelMax() - _craft->getFuel()) / _craft->getRules()->getRefuelRate() / 2.0);
 		secondLine << formatTime(fuelHours);
 	}
 	_txtFuel->setText(secondLine.str());
+
+	std::ostringstream thirdLine;
+	if (_craft->getShieldCapacity() != 0)
+	{
+		thirdLine << tr("STR_SHIELD").arg(Unicode::formatPercentage(_craft->getShieldPercentage()));
+		if (_craft->getShield() < _craft->getShieldCapacity())
+		{
+			if (_craft->getRules()->getShieldRechargeAtBase() != 0)
+			{
+				int shieldHours = (int)ceil((double)(_craft->getShieldCapacity() - _craft->getShield()) / _craft->getRules()->getShieldRechargeAtBase());
+				thirdLine << formatTime(shieldHours);
+			}
+		}
+	}
+	else
+	{
+		thirdLine << "";
+	}
+	_txtShield->setText(thirdLine.str());
 
 	if (_craft->getRules()->getSoldiers() > 0)
 	{
@@ -186,26 +241,58 @@ void CraftInfoState::init()
 		_equip->clear();
 
 		Surface *frame1 = texture->getFrame(38);
-		frame1->setY(0);
-		for (int i = 0, x = 0; i < _craft->getNumSoldiers(); ++i, x += 10)
+
+		SurfaceSet *customArmorPreviews = _game->getMod()->getSurfaceSet("CustomArmorPreviews");
+		int x = 0;
+		for (std::vector<Soldier*>::iterator i = _base->getSoldiers()->begin(); i != _base->getSoldiers()->end(); ++i)
 		{
-			frame1->setX(x);
-			frame1->blit(_crew);
+			if ((*i)->getCraft() == _craft)
+			{
+				for (auto index : (*i)->getArmor()->getCustomArmorPreviewIndex())
+				{
+					Surface *customFrame1 = customArmorPreviews->getFrame(index);
+					if (customFrame1)
+					{
+						// modded armor previews
+						customFrame1->blitNShade(_crew, x, 0);
+					}
+					else
+					{
+						// vanilla
+						frame1->blitNShade(_crew, x, 0);
+					}
+					x += 10;
+				}
+			}
 		}
 
 		Surface *frame2 = texture->getFrame(40);
-		frame2->setY(0);
-		int x = 0;
-		for (int i = 0; i < _craft->getNumVehicles(); ++i, x += 10)
+
+		SurfaceSet *customItemPreviews = _game->getMod()->getSurfaceSet("CustomItemPreviews");
+		x = 0;
+		for (std::vector<Vehicle*>::iterator i = _craft->getVehicles()->begin(); i != _craft->getVehicles()->end(); ++i)
 		{
-			frame2->setX(x);
-			frame2->blit(_equip);
+			for (auto index : (*i)->getRules()->getCustomItemPreviewIndex())
+			{
+				Surface *customFrame2 = customItemPreviews->getFrame(index);
+				if (customFrame2)
+				{
+					// modded HWP/auxiliary previews
+					customFrame2->blitNShade(_equip, x, 0);
+				}
+				else
+				{
+					// vanilla
+					frame2->blitNShade(_equip, x, 0);
+				}
+				x += 10;
+			}
 		}
+
 		Surface *frame3 = texture->getFrame(39);
 		for (int i = 0; i < _craft->getNumEquipment(); i += 4, x += 10)
 		{
-			frame3->setX(x);
-			frame3->blit(_equip);
+			frame3->blitNShade(_equip, x, 0);
 		}
 	}
 	else
@@ -215,85 +302,42 @@ void CraftInfoState::init()
 		_btnCrew->setVisible(false);
 		_btnEquip->setVisible(false);
 		_btnArmor->setVisible(false);
+		_btnPilots->setVisible(false);
 	}
 
-	if (_craft->getRules()->getWeapons() > 0)
+	for(int i = 0; i < _weaponNum; ++i)
 	{
-		CraftWeapon *w1 = _craft->getWeapons()->at(0);
+		CraftWeapon *w1 = _craft->getWeapons()->at(i);
 
-		_weapon1->clear();
+		_weapon[i]->clear();
 		if (w1 != 0)
 		{
 			Surface *frame = texture->getFrame(w1->getRules()->getSprite() + 48);
-			frame->setX(0);
-			frame->setY(0);
-			frame->blit(_weapon1);
+			frame->blitNShade(_weapon[i], 0, 0);
 
-			std::ostringstream leftWeaponLine;
-			leftWeaponLine << Unicode::TOK_COLOR_FLIP << tr(w1->getRules()->getType());
-			_txtW1Name->setText(leftWeaponLine.str());
-			leftWeaponLine.str("");
-			leftWeaponLine << tr("STR_AMMO_").arg(w1->getAmmo()) << "\n" << Unicode::TOK_COLOR_FLIP;
-			leftWeaponLine << tr("STR_MAX").arg(w1->getRules()->getAmmoMax());
-			if (_craft->getStatus() == "STR_REARMING" && w1->getAmmo() < w1->getRules()->getAmmoMax())
+			std::ostringstream weaponLine;
+			weaponLine << Unicode::TOK_COLOR_FLIP << tr(w1->getRules()->getType());
+			_txtWName[i]->setText(weaponLine.str());
+			weaponLine.str("");
+			if (w1->getRules()->getAmmoMax())
 			{
-				int rearmHours = (int)ceil((double)(w1->getRules()->getAmmoMax() - w1->getAmmo()) / w1->getRules()->getRearmRate());
-				leftWeaponLine << formatTime(rearmHours);
+				weaponLine << tr("STR_AMMO_").arg(w1->getAmmo()) << "\n" << Unicode::TOK_COLOR_FLIP;
+				weaponLine << tr("STR_MAX").arg(w1->getRules()->getAmmoMax());
+				if (_craft->getStatus() == "STR_REARMING" && w1->getAmmo() < w1->getRules()->getAmmoMax())
+				{
+					int rearmHours = (int)ceil((double)(w1->getRules()->getAmmoMax() - w1->getAmmo()) / w1->getRules()->getRearmRate());
+					weaponLine << formatTime(rearmHours);
+				}
 			}
-			_txtW1Ammo->setText(leftWeaponLine.str());
+			_txtWAmmo[i]->setText(weaponLine.str());
 		}
 		else
 		{
-			_txtW1Name->setText("");
-			_txtW1Ammo->setText("");
+			_txtWName[i]->setText("");
+			_txtWAmmo[i]->setText("");
 		}
 	}
-	else
-	{
-		_weapon1->setVisible(false);
-		_btnW1->setVisible(false);
-		_txtW1Name->setVisible(false);
-		_txtW1Ammo->setVisible(false);
-	}
 
-	if (_craft->getRules()->getWeapons() > 1)
-	{
-		CraftWeapon *w2 = _craft->getWeapons()->at(1);
-
-		_weapon2->clear();
-		if (w2 != 0)
-		{
-			Surface *frame = texture->getFrame(w2->getRules()->getSprite() + 48);
-			frame->setX(0);
-			frame->setY(0);
-			frame->blit(_weapon2);
-
-			std::ostringstream rightWeaponLine;
-			rightWeaponLine << Unicode::TOK_COLOR_FLIP << tr(w2->getRules()->getType());
-			_txtW2Name->setText(rightWeaponLine.str());
-			rightWeaponLine.str("");
-			rightWeaponLine << tr("STR_AMMO_").arg(w2->getAmmo()) << "\n" << Unicode::TOK_COLOR_FLIP;
-			rightWeaponLine << tr("STR_MAX").arg(w2->getRules()->getAmmoMax());
-			if (_craft->getStatus() == "STR_REARMING" && w2->getAmmo() < w2->getRules()->getAmmoMax())
-			{
-				int rearmHours = (int)ceil((double)(w2->getRules()->getAmmoMax() - w2->getAmmo()) / w2->getRules()->getRearmRate());
-				rightWeaponLine << formatTime(rearmHours);
-			}
-			_txtW2Ammo->setText(rightWeaponLine.str());
-		}
-		else
-		{
-			_txtW2Name->setText("");
-			_txtW2Ammo->setText("");
-		}
-	}
-	else
-	{
-		_weapon2->setVisible(false);
-		_btnW2->setVisible(false);
-		_txtW2Name->setVisible(false);
-		_txtW2Ammo->setVisible(false);
-	}
 }
 
 /**
@@ -329,23 +373,33 @@ void CraftInfoState::btnOkClick(Action *)
 }
 
 /**
- * Goes to the Select Armament window for
- * the first weapon.
+ * Opens the corresponding Ufopaedia craft article.
  * @param action Pointer to an action.
  */
-void CraftInfoState::btnW1Click(Action *)
+void CraftInfoState::btnUfopediaClick(Action *)
 {
-	_game->pushState(new CraftWeaponsState(_base, _craftId, 0));
+	if (_craft)
+	{
+		std::string articleId = _craft->getRules()->getType();
+		Ufopaedia::openArticle(_game, articleId);
+	}
 }
 
 /**
- * Goes to the Select Armament window for
- * the second weapon.
+ * Goes to the Select Armament window
+ * for the weapons.
  * @param action Pointer to an action.
  */
-void CraftInfoState::btnW2Click(Action *)
+void CraftInfoState::btnWClick(Action * act)
 {
-	_game->pushState(new CraftWeaponsState(_base, _craftId, 1));
+	for(int i = 0; i < _weaponNum; ++i)
+	{
+		if (act->getSender() == _btnW[i])
+		{
+			_game->pushState(new CraftWeaponsState(_base, _craftId, i));
+			return;
+		}
+	}
 }
 
 /**
@@ -373,6 +427,15 @@ void CraftInfoState::btnEquipClick(Action *)
 void CraftInfoState::btnArmorClick(Action *)
 {
 	_game->pushState(new CraftArmorState(_base, _craftId));
+}
+
+/**
+ * Goes to the Pilots Info screen.
+ * @param action Pointer to an action.
+ */
+void CraftInfoState::btnPilotsClick(Action *)
+{
+	_game->pushState(new CraftPilotsState(_base, _craftId));
 }
 
 /**

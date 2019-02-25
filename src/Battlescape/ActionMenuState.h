@@ -35,18 +35,27 @@ private:
 	BattleAction *_action;
 	ActionMenuItem *_actionMenu[6];
 	/// Adds a new menu item for an action.
-	void addItem(BattleActionType ba, const std::string &name, int *id);
+	void addItem(BattleActionType ba, const std::string &name, int *id, SDL_Keycode key);
+#ifdef __MOBILE__
+	InteractiveSurface *_outside;
+#endif
 public:
 	/// Creates the Action Menu state.
 	ActionMenuState(BattleAction *action, int x, int y);
 	/// Cleans up the Action Menu state.
 	~ActionMenuState();
+	/// Init function.
+	void init() override;
 	/// Handler for right-clicking anything.
-	void handle(Action *action);
+	void handle(Action *action) override;
 	/// Handler for clicking a action menu item.
 	void btnActionMenuItemClick(Action *action);
 	/// Update the resolution settings, we just resized the window.
-	void resize(int &dX, int &dY);
+	void resize(int &dX, int &dY) override;
+#ifdef __MOBILE__
+	/// Pop the state in case of clicking.
+	void outsideClick(Action *action);
+#endif
 };
 
 }

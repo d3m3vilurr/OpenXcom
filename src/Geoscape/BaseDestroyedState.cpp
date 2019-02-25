@@ -34,7 +34,7 @@
 namespace OpenXcom
 {
 
-BaseDestroyedState::BaseDestroyedState(Base *base) : _base(base)
+BaseDestroyedState::BaseDestroyedState(Base *base, bool missiles, bool partialDestruction) : _base(base), _missiles(missiles), _partialDestruction(partialDestruction)
 {
 	_screen = false;
 
@@ -65,6 +65,23 @@ BaseDestroyedState::BaseDestroyedState(Base *base) : _base(base)
 	_txtMessage->setWordWrap(true);
 
 	_txtMessage->setText(tr("STR_THE_ALIENS_HAVE_DESTROYED_THE_UNDEFENDED_BASE").arg(_base->getName()));
+	if (_missiles)
+	{
+		if (_partialDestruction)
+		{
+			_txtMessage->setText(tr("STR_ALIEN_MISSILES_HAVE_DAMAGED_OUR_BASE").arg(_base->getName()));
+		}
+		else
+		{
+			_txtMessage->setText(tr("STR_ALIEN_MISSILES_HAVE_DESTROYED_OUR_BASE").arg(_base->getName()));
+		}
+	}
+
+	if (_partialDestruction)
+	{
+		// don't remove the alien mission yet, there might be more attacks coming
+		return;
+	}
 
 	std::vector<Region*>::iterator k = _game->getSavedGame()->getRegions()->begin();
 	for (; k != _game->getSavedGame()->getRegions()->end(); ++k)
@@ -115,10 +132,17 @@ BaseDestroyedState::~BaseDestroyedState()
 void BaseDestroyedState::btnOkClick(Action *)
 {
 	_game->popState();
+	if (_partialDestruction)
+	{
+		// the base was damaged, but survived
+		return;
+	}
+
 	for (std::vector<Base*>::iterator i = _game->getSavedGame()->getBases()->begin(); i != _game->getSavedGame()->getBases()->end(); ++i)
 	{
 		if ((*i) == _base)
 		{
+			_game->getSavedGame()->stopHuntingXcomCrafts((*i)); // destroyed together with the base
 			delete (*i);
 			_game->getSavedGame()->getBases()->erase(i);
 			break;

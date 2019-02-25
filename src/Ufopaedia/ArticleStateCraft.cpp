@@ -41,7 +41,14 @@ namespace OpenXcom
 		_txtTitle = new Text(210, 32, 5, 24);
 
 		// Set palette
-		setPalette("PAL_UFOPAEDIA");
+		if (defs->customPalette)
+		{
+			setCustomPalette(_game->getMod()->getSurface(defs->image_id)->getPalette(), Mod::UFOPAEDIA_CURSOR);
+		}
+		else
+		{
+			setPalette("PAL_UFOPAEDIA");
+		}
 
 		ArticleState::initLayout();
 
@@ -49,10 +56,12 @@ namespace OpenXcom
 		add(_txtTitle);
 
 		// Set up objects
-		_game->getMod()->getSurface(defs->image_id)->blit(_bg);
+		_game->getMod()->getSurface(defs->image_id)->blitNShade(_bg, 0, 0);
 		_btnOk->setColor(Palette::blockOffset(15)-1);
 		_btnPrev->setColor(Palette::blockOffset(15)-1);
 		_btnNext->setColor(Palette::blockOffset(15)-1);
+		_btnInfo->setColor(Palette::blockOffset(15)-1);
+		_btnInfo->setVisible(_game->getMod()->getShowPediaInfoButton());
 
 		_txtTitle->setColor(Palette::blockOffset(14)+15);
 		_txtTitle->setBig();
@@ -63,6 +72,7 @@ namespace OpenXcom
 		add(_txtInfo);
 
 		_txtInfo->setColor(Palette::blockOffset(14)+15);
+		_txtInfo->setSecondaryColor(Palette::blockOffset(15) + 4);
 		_txtInfo->setWordWrap(true);
 		_txtInfo->setText(tr(defs->text));
 
@@ -75,10 +85,61 @@ namespace OpenXcom
 		std::ostringstream ss;
 		ss << tr("STR_MAXIMUM_SPEED_UC").arg(Unicode::formatNumber(craft->getMaxSpeed())) << '\n';
 		ss << tr("STR_ACCELERATION").arg(craft->getAcceleration()) << '\n';
-		ss << tr("STR_FUEL_CAPACITY").arg(Unicode::formatNumber(craft->getMaxFuel())) << '\n';
+		int range;
+		switch (_game->getMod()->getPediaReplaceCraftFuelWithRangeType())
+		{
+			// Both max range alone and average range get rounded
+			case 0:
+			case 2:
+				range = craft->calculateRange(_game->getMod()->getPediaReplaceCraftFuelWithRangeType());
+				if (range == -1)
+				{
+					ss << tr("STR_MAXIMUM_RANGE").arg(tr("STR_INFINITE_RANGE")) << '\n';
+					break;
+				}
+
+				// Round the answer to
+				if (range < 100)
+				{
+					// don't round if it's small!
+				}
+				else if (range < 1000)
+				{
+					// nearest 10 nautical miles
+					range += 10 / 2;
+					range -= range % 10;
+				}
+				else
+				{
+					// nearest 100 nautical miles
+					range += 100 / 2;
+					range -= range % 100;
+				}
+
+				ss << tr("STR_MAXIMUM_RANGE").arg(Unicode::formatNumber(range)) << '\n';
+				break;
+			// Min-maxxers can fret over exact numbers
+			case 1:
+				if (craft->calculateRange(0) == -1)
+				{
+					ss << tr("STR_MAXIMUM_RANGE").arg(tr("STR_INFINITE_RANGE")) << '\n';
+					break;
+				}
+
+				ss << tr("STR_MINIMUM_RANGE").arg(Unicode::formatNumber(craft->calculateRange(1))) << '\n';
+				ss << tr("STR_MAXIMUM_RANGE").arg(Unicode::formatNumber(craft->calculateRange(0))) << '\n';
+				break;
+			default :
+				ss << tr("STR_FUEL_CAPACITY").arg(Unicode::formatNumber(craft->getMaxFuel())) << '\n';
+				break;
+		}
 		ss << tr("STR_WEAPON_PODS").arg(craft->getWeapons()) << '\n';
 		ss << tr("STR_DAMAGE_CAPACITY_UC").arg(Unicode::formatNumber(craft->getMaxDamage())) << '\n';
 		ss << tr("STR_CARGO_SPACE").arg(craft->getSoldiers()) << '\n';
+		if (craft->getPilots() > 0)
+		{
+			ss << tr("STR_COCKPIT_CAPACITY").arg(craft->getPilots()) << '\n';
+		}
 		ss << tr("STR_HWP_CAPACITY").arg(craft->getVehicles());
 		_txtStats->setText(ss.str());
 

@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 #include <string>
+#include "../Mod/RuleCraft.h"
 
 namespace OpenXcom
 {
@@ -45,38 +46,46 @@ class Vehicle;
 class Craft : public MovingTarget
 {
 private:
-	RuleCraft *_rules;
+	const RuleCraft *_rules;
 	Base *_base;
-	int _fuel, _damage, _interceptionOrder, _takeoff;
+	int _fuel, _damage, _shield, _interceptionOrder, _takeoff;
 	std::vector<CraftWeapon*> _weapons;
 	ItemContainer *_items;
 	std::vector<Vehicle*> _vehicles;
 	std::string _status;
 	bool _lowFuel, _mission, _inBattlescape, _inDogfight;
 	double _speedMaxRadian;
+	RuleCraftStats _stats;
+	bool _isAutoPatrolling;
+	double _lonAuto, _latAuto;
+	std::vector<int> _pilots;
+
+	void recalcSpeedMaxRadian();
 
 	using MovingTarget::load;
 public:
 	/// Creates a craft of the specified type.
-	Craft(RuleCraft *rules, Base *base, int id = 0);
+	Craft(const RuleCraft *rules, Base *base, int id = 0);
 	/// Cleans up the craft.
 	~Craft();
 	/// Loads the craft from YAML.
 	void load(const YAML::Node& node, const Mod *mod, SavedGame *save);
+	/// Finishes loading the craft from YAML (called after all other XCOM craft are loaded too).
+	void finishLoading(const YAML::Node& node, SavedGame *save);
 	/// Saves the craft to YAML.
-	YAML::Node save() const;
+	YAML::Node save() const override;
 	/// Loads a craft ID from YAML.
 	static CraftId loadId(const YAML::Node &node);
 	/// Gets the craft's type.
-	std::string getType() const;
+	std::string getType() const override;
 	/// Gets the craft's ruleset.
-	RuleCraft *getRules() const;
+	const RuleCraft *getRules() const;
 	/// Sets the craft's ruleset.
 	void changeRules(RuleCraft *rules);
 	/// Gets the craft's default name.
-	std::string getDefaultName(Language *lang) const;
+	std::string getDefaultName(Language *lang) const override;
 	/// Gets the craft's marker sprite.
-	int getMarker() const;
+	int getMarker() const override;
 	/// Gets the craft's base.
 	Base *getBase() const;
 	/// Sets the craft's base.
@@ -88,9 +97,21 @@ public:
 	/// Gets the craft's altitude.
 	std::string getAltitude() const;
 	/// Sets the craft's destination.
-	void setDestination(Target *dest);
+	void setDestination(Target *dest) override;
+	/// Gets whether the craft is on auto patrol.
+	bool getIsAutoPatrolling() const;
+	/// Sets whether the craft is on auto patrol.
+	void setIsAutoPatrolling(bool isAuto);
+	/// Gets the auto patrol longitude.
+	double getLongitudeAuto() const;
+	/// Sets the auto patrol longitude.
+	void setLongitudeAuto(double lon);
+	/// Gets the auto patrol latitude.
+	double getLatitudeAuto() const;
+	/// Sets the auto patrol latitude.
+	void setLatitudeAuto(double lat);
 	/// Gets the craft's amount of weapons.
-	int getNumWeapons() const;
+	int getNumWeapons(bool onlyLoaded = false) const;
 	/// Gets the craft's amount of soldiers.
 	int getNumSoldiers() const;
 	/// Gets the craft's amount of equipment.
@@ -103,18 +124,34 @@ public:
 	ItemContainer *getItems();
 	/// Gets the craft's vehicles.
 	std::vector<Vehicle*> *getVehicles();
+	/// Update the craft's stats.
+	void addCraftStats(const RuleCraftStats& s);
+	/// Gets the craft's stats.
+	const RuleCraftStats& getCraftStats() const;
+	/// Gets the craft's max amount of fuel.
+	int getFuelMax() const;
 	/// Gets the craft's amount of fuel.
 	int getFuel() const;
 	/// Sets the craft's amount of fuel.
 	void setFuel(int fuel);
 	/// Gets the craft's percentage of fuel.
 	int getFuelPercentage() const;
+	/// Gets the craft's max amount of damage.
+	int getDamageMax() const;
 	/// Gets the craft's amount of damage.
 	int getDamage() const;
 	/// Sets the craft's amount of damage.
 	void setDamage(int damage);
 	/// Gets the craft's percentage of damage.
 	int getDamagePercentage() const;
+	/// Gets the craft's max shield capacity
+	int getShieldCapacity () const;
+        /// Gets the craft's shield remaining
+	int getShield() const;
+	/// Sets the craft's shield remaining
+	void setShield(int shield);
+	/// Gets the percent shield remaining
+	int getShieldPercentage() const;
 	/// Gets whether the craft is running out of fuel.
 	bool getLowFuel() const;
 	/// Sets whether the craft is running out of fuel.
@@ -125,10 +162,8 @@ public:
 	void setMissionComplete(bool mission);
 	/// Gets the craft's distance from its base.
 	double getDistanceFromBase() const;
-	/// Gets the craft's fuel consumption.
-	int getFuelConsumption() const;
 	/// Gets the craft's fuel consumption at a certain speed.
-	int getFuelConsumption(int speed) const;
+	int getFuelConsumption(int speed, int escortSpeed) const;
 	/// Gets the craft's minimum fuel limit.
 	int getFuelLimit() const;
 	/// Gets the craft's minimum fuel limit to go to a base.
@@ -137,16 +172,24 @@ public:
 	double getBaseRange() const;
 	/// Returns the craft to its base.
 	void returnToBase();
+	/// Returns the crew to their base (using transfers).
+	void evacuateCrew(const Mod *mod);
 	/// Checks if a target is detected by the craft's radar.
 	bool detect(Target *target) const;
 	/// Checks if a target is inside the craft's radar range.
 	bool insideRadarRange(Target *target) const;
 	/// Handles craft logic.
-	void think();
+	bool think();
 	/// Does a craft full checkup.
 	void checkup();
 	/// Consumes the craft's fuel.
-	void consumeFuel();
+	void consumeFuel(int escortSpeed);
+	/// Calculates the time to repair
+	unsigned int calcRepairTime();
+	/// Calculates the time to refuel
+	unsigned int calcRefuelTime();
+	/// Calculates the time to rearm
+	unsigned int calcRearmTime();
 	/// Repairs the craft.
 	void repair();
 	/// Refuels the craft.
@@ -163,6 +206,26 @@ public:
 	int getSpaceAvailable() const;
 	/// Gets the amount of space used inside a craft.
 	int getSpaceUsed() const;
+	/// Checks if there are enough required items onboard.
+	bool areRequiredItemsOnboard(const std::map<std::string, int> *requiredItems);
+	/// Destroys given required items.
+	void destroyRequiredItems(const std::map<std::string, int> *requiredItems);
+	/// Checks if there are enough pilots onboard.
+	bool arePilotsOnboard();
+	/// Checks if a pilot is already on the list.
+	bool isPilot(int pilotId);
+	/// Adds a pilot to the list.
+	void addPilot(int pilotId);
+	/// Removes all pilots from the list.
+	void removeAllPilots();
+	/// Gets the list of craft pilots.
+	const std::vector<Soldier*> getPilotList(bool autoAdd);
+	/// Calculates the accuracy bonus based on pilot skills.
+	int getPilotAccuracyBonus(const std::vector<Soldier*> &pilots, const Mod *mod) const;
+	/// Calculates the dodge bonus based on pilot skills.
+	int getPilotDodgeBonus(const std::vector<Soldier*> &pilots, const Mod *mod) const;
+	/// Calculates the approach speed modifier based on pilot skills.
+	int getPilotApproachSpeedModifier(const std::vector<Soldier*> &pilots, const Mod *mod) const;
 	/// Gets the craft's vehicles of a certain type.
 	int getVehicleCount(const std::string &vehicle) const;
 	/// Sets the craft's dogfight status.
@@ -179,6 +242,8 @@ public:
 	void unload(const Mod *mod);
 	/// Reuses a base item.
 	void reuseItem(const std::string &item);
+	/// Gets the attraction value of the craft for alien hunter-killers.
+	int getHunterKillerAttraction(int huntMode) const;
 };
 
 }

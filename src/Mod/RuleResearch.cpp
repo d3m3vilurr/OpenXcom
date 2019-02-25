@@ -16,13 +16,16 @@
  * You should have received a copy of the GNU General Public License
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <algorithm>
 #include "RuleResearch.h"
 #include "../Engine/Exception.h"
+#include "../Engine/Collections.h"
+#include "Mod.h"
 
 namespace OpenXcom
 {
 
-RuleResearch::RuleResearch(const std::string & name) : _name(name), _cost(0), _points(0), _needItem(false), _destroyItem(false), _listOrder(0)
+RuleResearch::RuleResearch(const std::string &name) : _name(name), _cost(0), _points(0), _sequentialGetOneFree(false), _needItem(false), _destroyItem(false), _listOrder(0)
 {
 }
 
@@ -33,15 +36,24 @@ RuleResearch::RuleResearch(const std::string & name) : _name(name), _cost(0), _p
  */
 void RuleResearch::load(const YAML::Node &node, int listOrder)
 {
+	if (const YAML::Node &parent = node["refNode"])
+	{
+		load(parent, listOrder);
+	}
 	_name = node["name"].as<std::string>(_name);
 	_lookup = node["lookup"].as<std::string>(_lookup);
 	_cutscene = node["cutscene"].as<std::string>(_cutscene);
+	_spawnedItem = node["spawnedItem"].as<std::string>(_spawnedItem);
 	_cost = node["cost"].as<int>(_cost);
 	_points = node["points"].as<int>(_points);
-	_dependencies = node["dependencies"].as< std::vector<std::string> >(_dependencies);
-	_unlocks = node["unlocks"].as< std::vector<std::string> >(_unlocks);
-	_getOneFree = node["getOneFree"].as< std::vector<std::string> >(_getOneFree);
-	_requires = node["requires"].as< std::vector<std::string> >(_requires);
+	_dependenciesName = node["dependencies"].as< std::vector<std::string> >(_dependenciesName);
+	_unlocksName = node["unlocks"].as< std::vector<std::string> >(_unlocksName);
+	_disablesName = node["disables"].as< std::vector<std::string> >(_disablesName);
+	_getOneFreeName = node["getOneFree"].as< std::vector<std::string> >(_getOneFreeName);
+	_requiresName = node["requires"].as< std::vector<std::string> >(_requiresName);
+	_requiresBaseFunc = node["requiresBaseFunc"].as< std::vector<std::string> >(_requiresBaseFunc);
+	_sequentialGetOneFree = node["sequentialGetOneFree"].as<bool>(_sequentialGetOneFree);
+	_getOneFreeProtectedName = node["getOneFreeProtected"].as< std::map<std::string, std::vector<std::string> > >(_getOneFreeProtectedName);
 	_needItem = node["needItem"].as<bool>(_needItem);
 	_destroyItem = node["destroyItem"].as<bool>(_destroyItem);
 	_listOrder = node["listOrder"].as<int>(_listOrder);
@@ -49,11 +61,46 @@ void RuleResearch::load(const YAML::Node &node, int listOrder)
 	{
 		_listOrder = listOrder;
 	}
+	std::sort(_requiresBaseFunc.begin(), _requiresBaseFunc.end());
 	// This is necessary, research code assumes it!
-	if (!_requires.empty() && _cost != 0)
+	if (!_requiresName.empty() && _cost != 0)
 	{
 		throw Exception("Research topic " + _name + " has requirements, but the cost is not zero. Sorry, this is not allowed!");
 	}
+}
+
+/**
+ * Cross link with other Rules.
+ */
+void RuleResearch::afterLoad(const Mod* mod)
+{
+	_dependencies = mod->getResearch(_dependenciesName);
+	_unlocks = mod->getResearch(_unlocksName);
+	_disables = mod->getResearch(_disablesName);
+	_getOneFree = mod->getResearch(_getOneFreeName);
+	_requires = mod->getResearch(_requiresName);
+
+	for (auto& n : _getOneFreeProtectedName)
+	{
+		auto left = mod->getResearch(n.first, false);
+		if (left)
+		{
+			auto right = mod->getResearch(n.second);
+			_getOneFreeProtected[left] = right;
+		}
+		else
+		{
+			throw Exception("Unknown research '" + n.first + "'");
+		}
+	}
+
+	//remove not needed data
+	Collections::deleteAll(_dependenciesName);
+	Collections::deleteAll(_unlocksName);
+	Collections::deleteAll(_disablesName);
+	Collections::deleteAll(_getOneFreeName);
+	Collections::deleteAll(_requiresName);
+	Collections::deleteAll(_getOneFreeProtectedName);
 }
 
 /**
@@ -69,7 +116,7 @@ int RuleResearch::getCost() const
  * Gets the name of this ResearchProject.
  * @return The name of this ResearchProject.
  */
-const std::string & RuleResearch::getName() const
+const std::string &RuleResearch::getName() const
 {
 	return _name;
 }
@@ -78,9 +125,18 @@ const std::string & RuleResearch::getName() const
  * Gets the list of dependencies, i.e. ResearchProjects, that must be discovered before this one.
  * @return The list of ResearchProjects.
  */
-const std::vector<std::string> & RuleResearch::getDependencies() const
+const std::vector<const RuleResearch*> &RuleResearch::getDependencies() const
 {
 	return _dependencies;
+}
+
+/**
+ * Checks if this ResearchProject gives free topics in sequential order (or random order).
+ * @return True if the ResearchProject gives free topics in sequential order.
+ */
+bool RuleResearch::sequentialGetOneFree() const
+{
+	return _sequentialGetOneFree;
 }
 
 /**
@@ -104,9 +160,18 @@ bool RuleResearch::destroyItem() const
  * Gets the list of ResearchProjects unlocked by this research.
  * @return The list of ResearchProjects.
  */
-const std::vector<std::string> & RuleResearch::getUnlocked() const
+const std::vector<const RuleResearch*> &RuleResearch::getUnlocked() const
 {
 	return _unlocks;
+}
+
+/**
+ * Gets the list of ResearchProjects disabled by this research.
+ * @return The list of ResearchProjects.
+ */
+const std::vector<const RuleResearch*> &RuleResearch::getDisabled() const
+{
+	return _disables;
 }
 
 /**
@@ -122,16 +187,25 @@ int RuleResearch::getPoints() const
  * Gets the list of ResearchProjects granted at random for free by this research.
  * @return The list of ResearchProjects.
  */
-const std::vector<std::string> & RuleResearch::getGetOneFree() const
+const std::vector<const RuleResearch*> &RuleResearch::getGetOneFree() const
 {
 	return _getOneFree;
+}
+
+/**
+ * Gets the list(s) of ResearchProjects granted at random for free by this research (if a defined prerequisite is met).
+ * @return The list(s) of ResearchProjects.
+ */
+const std::map<const RuleResearch*, std::vector<const RuleResearch*> > &RuleResearch::getGetOneFreeProtected() const
+{
+	return _getOneFreeProtected;
 }
 
 /**
  * Gets what article to look up in the ufopedia.
  * @return The article to look up in the ufopaedia
  */
-std::string RuleResearch::getLookup() const
+const std::string &RuleResearch::getLookup() const
 {
 	return _lookup;
 }
@@ -140,9 +214,18 @@ std::string RuleResearch::getLookup() const
  * Gets the requirements for this ResearchProject.
  * @return The requirement for this research.
  */
-const std::vector<std::string> & RuleResearch::getRequirements() const
+const std::vector<const RuleResearch*> &RuleResearch::getRequirements() const
 {
 	return _requires;
+}
+
+/**
+ * Gets the require base functions to start this ResearchProject.
+ * @return List of functions IDs
+ */
+const std::vector<std::string> &RuleResearch::getRequireBaseFunc() const
+{
+	return _requiresBaseFunc;
 }
 
 /**
@@ -161,6 +244,15 @@ int RuleResearch::getListOrder() const
 const std::string & RuleResearch::getCutscene() const
 {
 	return _cutscene;
+}
+
+/**
+ * Gets the item to spawn in the base stores when this topic is researched.
+ * @return The item id.
+ */
+const std::string & RuleResearch::getSpawnedItem() const
+{
+	return _spawnedItem;
 }
 
 }

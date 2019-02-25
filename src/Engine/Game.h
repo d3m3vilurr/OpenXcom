@@ -30,6 +30,7 @@ class Cursor;
 class Language;
 class SavedGame;
 class Mod;
+class ModInfo;
 class FpsCounter;
 
 /**

@@ -29,6 +29,7 @@
 #include "../Mod/RuleResearch.h"
 #include "../Savegame/ItemContainer.h"
 #include "../Savegame/ResearchProject.h"
+#include "../Savegame/SavedGame.h"
 #include "../Interface/ArrowButton.h"
 #include "../Engine/Timer.h"
 #include "../Engine/RNG.h"
@@ -81,7 +82,7 @@ void ResearchInfoState::buildUi()
 	_btnLess = new ArrowButton(ARROW_BIG_DOWN, 13, 14, 195, 120);
 
 	_surfaceScientists = new InteractiveSurface(230, 140, 45, 30);
-	_surfaceScientists->onMouseClick((ActionHandler)&ResearchInfoState::handleWheel, 0);
+	_surfaceScientists->onMouseWheel((ActionHandler)&ResearchInfoState::handleWheel);
 
 	// Set palette
 	setInterface("allocateResearch");
@@ -152,6 +153,15 @@ void ResearchInfoState::buildUi()
 		_btnOk->onKeyboardPress((ActionHandler)&ResearchInfoState::btnOkClick, Options::keyCancel);
 	}
 	_btnCancel->onMouseClick((ActionHandler)&ResearchInfoState::btnCancelClick);
+
+	if (_rule)
+	{
+		// mark new as normal
+		if (_game->getSavedGame()->isResearchRuleStatusNew(_rule->getName()))
+		{
+			_game->getSavedGame()->setResearchRuleStatus(_rule->getName(), RuleResearch::RESEARCH_STATUS_NORMAL);
+		}
+	}
 }
 
 /**
@@ -199,8 +209,14 @@ void ResearchInfoState::setAssignedScientist()
  */
 void ResearchInfoState::handleWheel(Action *action)
 {
-	if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP) moreByValue(Options::changeValueByMouseWheel);
-	else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN) lessByValue(Options::changeValueByMouseWheel);
+	const SDL_Event &ev(*action->getDetails());
+	if (ev.type == SDL_MOUSEWHEEL)
+	{
+		if (ev.wheel.y > 0)
+			moreByValue(Options::changeValueByMouseWheel);
+		else
+			lessByValue(Options::changeValueByMouseWheel);
+	}
 }
 
 /**

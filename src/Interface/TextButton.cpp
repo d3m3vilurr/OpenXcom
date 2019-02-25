@@ -186,7 +186,7 @@ void TextButton::setGroup(TextButton **group)
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void TextButton::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void TextButton::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	_text->setPalette(colors, firstcolor, ncolors);
@@ -271,7 +271,7 @@ void TextButton::draw()
 	}
 	_text->setInvert(press);
 
-	_text->blit(this);
+	_text->blit(this->getSurface());
 }
 
 /**
@@ -292,8 +292,7 @@ void TextButton::mousePress(Action *action, State *state)
 
 	if (isButtonHandled(action->getDetails()->button.button))
 	{
-		if (soundPress != 0 && _group == 0 &&
-			action->getDetails()->button.button != SDL_BUTTON_WHEELUP && action->getDetails()->button.button != SDL_BUTTON_WHEELDOWN)
+		if (soundPress != 0 && _group == 0)
 		{
 			soundPress->play(Mix_GroupAvailable(0));
 		}

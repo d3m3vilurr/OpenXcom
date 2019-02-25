@@ -139,7 +139,7 @@ void ScrollBar::setBackground(Surface *bg)
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void ScrollBar::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void ScrollBar::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 	_track->setPalette(colors, firstcolor, ncolors);
@@ -169,7 +169,7 @@ void ScrollBar::handle(Action *action, State *state)
  * Blits the scrollbar contents.
  * @param surface Pointer to surface to blit onto.
  */
-void ScrollBar::blit(Surface *surface)
+void ScrollBar::blit(SDL_Surface *surface)
 {
 	Surface::blit(surface);
 	if (_visible && !_hidden)
@@ -201,13 +201,23 @@ void ScrollBar::mousePress(Action *action, State *state)
 		}
 		_pressed = true;
 	}
-	else if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP)
+}
+
+/**
+ * This should handle mousewheel scrolling events.
+ * @param action Pointer to an action.
+ * @param state State that the action hanlders belong to.
+ */
+void ScrollBar::mouseWheel(Action *action, State *state)
+{
+	InteractiveSurface::mouseWheel(action, state);
+	const SDL_Event &ev(*action->getDetails());
+	if (ev.type == SDL_MOUSEWHEEL)
 	{
-		_list->scrollUp(false, true);
-	}
-	else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN)
-	{
-		_list->scrollDown(false, true);
+		if (ev.wheel.y > 0)
+			_list->scrollUp(false, true);
+		else
+			_list->scrollDown(false, true);
 	}
 }
 

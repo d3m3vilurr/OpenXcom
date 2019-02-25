@@ -45,6 +45,7 @@ private:
 	std::vector<Soldier*> *_list;
 
 	Surface *_bg, *_rank;
+	InteractiveSurface *_flag;
 	TextButton *_btnOk, *_btnPrev, *_btnNext, *_btnArmor, *_btnSack, *_btnDiary;
 	Text *_txtRank, *_txtMissions, *_txtKills, *_txtCraft, *_txtRecovery, *_txtPsionic, *_txtDead;
 	TextEdit *_edtSoldier;
@@ -59,7 +60,7 @@ public:
 	/// Cleans up the Soldier Info state.
 	~SoldierInfoState();
 	/// Updates the soldier info.
-	void init();
+	void init() override;
 	/// Set the soldier Id.
 	void setSoldierId(size_t soldier);
 	/// Handler for pressing on the Name edit.
@@ -78,6 +79,8 @@ public:
 	void btnSackClick(Action *action);
 	/// Handler for clicking the Diary button.
 	void btnDiaryClick(Action *action);
+	/// Handler for clicking the flag.
+	void btnFlagClick(Action *action);
 };
 
 }

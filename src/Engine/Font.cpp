@@ -62,7 +62,7 @@ void Font::load(const YAML::Node &node)
 		std::string file = "Language/" + (*i)["file"].as<std::string>();
 		UString chars = Unicode::convUtf8ToUtf32((*i)["chars"].as<std::string>());
 		image.surface = new Surface(image.width, image.height);
-		image.surface->loadImage(FileMap::getFilePath(file));
+		image.surface->loadImage(file);
 		_images.push_back(image);
 		init(_images.size() - 1, chars);
 	}
@@ -80,8 +80,7 @@ void Font::loadTerminal()
 	_monospace = true;
 
 	SDL_RWops *rw = SDL_RWFromConstMem(dosFont, DOSFONT_SIZE);
-	SDL_Surface *s = SDL_LoadBMP_RW(rw, 0);
-	SDL_FreeRW(rw);
+	SDL_Surface *s = SDL_LoadBMP_RW(rw, SDL_TRUE);
 	image.surface = new Surface(s->w, s->h);
 	SDL_Color terminal[2] = {{0, 0, 0, 0}, {185, 185, 185, 255}};
 	image.surface->setPalette(terminal, 0, 2);
@@ -168,13 +167,13 @@ void Font::init(size_t index, const UString &str)
  * @return Pointer to the font's surface with the respective
  * cropping rectangle set up.
  */
-Surface *Font::getChar(UCode c)
+SurfaceCrop Font::getChar(UCode c)
 {
 	if (_chars.find(c) == _chars.end())
 		c = '?';
-	Surface *surface = _images[_chars[c].first].surface;
-	*surface->getCrop() = _chars[c].second;
-	return surface;
+	auto surfaceCrop = _images[_chars[c].first].surface->getCrop();
+	*surfaceCrop.getCrop() = _chars[c].second;
+	return surfaceCrop;
 }
 
 /**
@@ -256,7 +255,7 @@ SDL_Color *Font::getPalette() const
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void Font::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void Font::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	for (std::vector<FontImage>::iterator i = _images.begin(); i != _images.end(); ++i)
 	{

@@ -20,6 +20,7 @@
 #include <vector>
 #include <string>
 #include <yaml-cpp/yaml.h>
+#include "Tile.h"
 #include "BattleUnit.h"
 #include "../Mod/AlienDeployment.h"
 
@@ -34,9 +35,11 @@ class BattlescapeState;
 class Position;
 class Pathfinding;
 class TileEngine;
+class RuleStartingCondition;
 class BattleItem;
 class Mod;
 class State;
+class ItemContainer;
 class RuleItem;
 
 /**
@@ -46,23 +49,33 @@ class RuleItem;
  */
 class SavedBattleGame
 {
+public:
+	/// Name of class used in script.
+	static constexpr const char *ScriptName = "BattleGame";
+	/// Register all useful function used by script.
+	static void ScriptRegister(ScriptParserBase* parser);
+
 private:
 	BattlescapeState *_battleState;
+	Mod *_rule;
 	int _mapsize_x, _mapsize_y, _mapsize_z;
 	std::vector<MapDataSet*> _mapDataSets;
-	Tile **_tiles;
+	std::vector<Tile> _tiles;
 	BattleUnit *_selectedUnit, *_lastSelectedUnit;
 	std::vector<Node*> _nodes;
 	std::vector<BattleUnit*> _units;
 	std::vector<BattleItem*> _items, _deleted;
 	Pathfinding *_pathfinding;
 	TileEngine *_tileEngine;
-	std::string _missionType;
+	std::string _missionType, _alienCustomDeploy, _alienCustomMission;
+	const RuleStartingCondition *_startingCondition;
 	int _globalShade;
 	UnitFaction _side;
-	int _turn;
-	bool _debugMode;
+	int _turn, _bughuntMinTurn;
+	int _animFrame;
+	bool _debugMode, _bughuntMode;
 	bool _aborted;
+	bool _baseCraftInventory = false;
 	int _itemId;
 	int _objectiveType, _objectivesDestroyed, _objectivesNeeded;
 	std::vector<BattleUnit*> _exposedUnits;
@@ -72,6 +85,7 @@ private:
 	BattleActionType _tuReserved;
 	bool _kneelReserved;
 	std::vector< std::vector<std::pair<int, int> > > _baseModules;
+	ItemContainer *_baseItems;
 	int _depth, _ambience;
 	double _ambientVolume;
 	std::vector<BattleItem*> _recoverGuaranteed, _recoverConditional;
@@ -79,11 +93,16 @@ private:
 	int _turnLimit, _cheatTurn;
 	ChronoTrigger _chronoTrigger;
 	bool _beforeGame;
+	std::string _hiddenMovementBackground;
+	ScriptValues<SavedBattleGame> _scriptValues;
 	/// Selects a soldier.
 	BattleUnit *selectPlayerUnit(int dir, bool checkReselect = false, bool setReselect = false, bool checkInventory = false);
+
 public:
+    /// FIXME: hit log
+	std::ostringstream hitLog;
 	/// Creates a new battle save, based on the current generic save.
-	SavedBattleGame();
+	SavedBattleGame(Mod *rule);
 	/// Cleans up the saved game.
 	~SavedBattleGame();
 	/// Loads a saved battle game from YAML.
@@ -93,19 +112,31 @@ public:
 	/// Sets the dimensions of the map and initializes it.
 	void initMap(int mapsize_x, int mapsize_y, int mapsize_z, bool resetTerrain = true);
 	/// Initialises the pathfinding and tileengine.
-	void initUtilities(Mod *mod);
+	void initUtilities(Mod *mod, bool craftInventory = false);
+	/// Gets if this is craft pre-eqipt phase in base view.
+	bool isBaseCraftInventory();
 	/// Gets the game's mapdatafiles.
 	std::vector<MapDataSet*> *getMapDataSets();
 	/// Sets the mission type.
 	void setMissionType(const std::string &missionType);
 	/// Gets the mission type.
-	std::string getMissionType() const;
+	const std::string &getMissionType() const;
+	/// Gets the base's items BEFORE the mission.
+	ItemContainer *getBaseStorageItems();
+	/// Sets the starting condition.
+	void setStartingCondition(const RuleStartingCondition* startingCondition);
+	/// Gets the starting condition.
+	const RuleStartingCondition *getStartingCondition() const;
+	/// Sets the custom alien data.
+	void setAlienCustom(const std::string &deploy, const std::string &mission);
+	/// Gets the custom alien deploy.
+	const std::string &getAlienCustomDeploy() const;
+	/// Gets the custom mission definition.
+	const std::string &getAlienCustomMission() const;
 	/// Sets the global shade.
 	void setGlobalShade(int shade);
 	/// Gets the global shade.
 	int getGlobalShade() const;
-	/// Gets a pointer to the tiles, a tile is the smallest component of battlescape.
-	Tile **getTiles() const;
 	/// Gets a pointer to the list of nodes.
 	std::vector<Node*> *getNodes();
 	/// Gets a pointer to the list of items.
@@ -133,7 +164,7 @@ public:
 	}
 
 	/// Converts a tile index to its coordinates.
-	void getTileCoords(int index, int *x, int *y, int *z) const;
+	Position getTileCoords(int index) const;
 
 	/**
 	 * Gets the Tile at a given position on the map.
@@ -142,13 +173,87 @@ public:
 	 * @param pos Map position.
 	 * @return Pointer to the tile at that position.
 	 */
-	inline Tile *getTile(Position pos) const
+	inline Tile *getTile(Position pos)
 	{
 		if (pos.x < 0 || pos.y < 0 || pos.z < 0
 			|| pos.x >= _mapsize_x || pos.y >= _mapsize_y || pos.z >= _mapsize_z)
 			return 0;
 
-		return _tiles[getTileIndex(pos)];
+		return &_tiles[getTileIndex(pos)];
+	}
+
+	/*
+	 * Gets a pointer to the tiles, a tile is the smallest component of battlescape.
+	 * @param pos Index position, less than `getMapSizeXYZ()`.
+	 * @return Pointer to the tile at that index.
+	 */
+	Tile* getTile(int i)
+	{
+		return &_tiles[i];
+	}
+
+	/**
+	 * Get tile that is below current one (const version).
+	 * @param tile
+	 * @return Tile below
+	 */
+	inline const Tile *getBelowTile(const Tile* tile) const
+	{
+		if (!tile || tile->getPosition().z == 0)
+		{
+			return nullptr;
+		}
+		// diffrence of pointers between layers is equal `_mapsize_y * _mapsize_x`
+		// when we subtrack this value from valid tile we get valid tile from lower layer.
+		return tile - _mapsize_y * _mapsize_x;
+	}
+
+	/**
+	 * Get tile that is below current one.
+	 * @param tile
+	 * @return Tile below
+	 */
+	inline Tile *getBelowTile(Tile* tile)
+	{
+		if (!tile || tile->getPosition().z == 0)
+		{
+			return nullptr;
+		}
+		// diffrence of pointers between layers is equal `_mapsize_y * _mapsize_x`
+		// when we subtrack this value from valid tile we get valid tile from lower layer.
+		return tile - _mapsize_y * _mapsize_x;
+	}
+
+	/**
+	 * Get tile that is over current one (const version).
+	 * @param tile
+	 * @return Tile over
+	 */
+	inline const Tile *getAboveTile(const Tile* tile) const
+	{
+		if (!tile || tile->getPosition().z == _mapsize_z - 1)
+		{
+			return nullptr;
+		}
+		// diffrence of pointers between layers is equal `_mapsize_y * _mapsize_x`
+		// when we add this value from valid tile we get valid tile from upper layer.
+		return tile + _mapsize_y * _mapsize_x;
+	}
+
+	/**
+	 * Get tile that is over current one.
+	 * @param tile
+	 * @return Tile over
+	 */
+	inline Tile *getAboveTile(Tile* tile)
+	{
+		if (!tile || tile->getPosition().z == _mapsize_z - 1)
+		{
+			return nullptr;
+		}
+		// diffrence of pointers between layers is equal `_mapsize_y * _mapsize_x`
+		// when we add this value from valid tile we get valid tile from upper layer.
+		return tile + _mapsize_y * _mapsize_x;
 	}
 
 	/// Gets the currently selected unit.
@@ -167,20 +272,52 @@ public:
 	TileEngine *getTileEngine() const;
 	/// Gets the playing side.
 	UnitFaction getSide() const;
+	/// Can unit use that weapon?
+	bool canUseWeapon(const BattleItem *weapon, const BattleUnit *unit, bool isBerserking) const;
 	/// Gets the turn number.
 	int getTurn() const;
+	/// Sets the bug hunt turn number.
+	void setBughuntMinTurn(int bughuntMinTurn);
+	/// Gets the bug hunt turn number.
+	int getBughuntMinTurn() const;
 	/// Ends the turn.
 	void endTurn();
+	/// Gets animation frame.
+	int getAnimFrame() const;
+	/// Increase animation frame.
+	void nextAnimFrame();
 	/// Sets debug mode.
 	void setDebugMode();
 	/// Gets debug mode.
 	bool getDebugMode() const;
+	/// Sets bug hunt mode.
+	void setBughuntMode(bool bughuntMode);
+	/// Gets bug hunt mode.
+	bool getBughuntMode() const;
 	/// Load map resources.
 	void loadMapResources(Mod *mod);
 	/// Resets tiles units are standing on
 	void resetUnitTiles();
+	/// Add item to delete list.
+	void deleteList(BattleItem *item);
 	/// Removes an item from the game.
 	void removeItem(BattleItem *item);
+	/// Add buildIn weapon form list to unit.
+	void addFixedItems(BattleUnit *unit, const std::vector<std::string> &fixed);
+	/// Init new created unit.
+	void initUnit(BattleUnit *unit, size_t itemLevel = 0);
+	/// Init new created item.
+	void initItem(BattleItem *item);
+	/// Create new item for unit.
+	BattleItem *createItemForUnit(const RuleItem *rule, BattleUnit *unit, bool fixedWeapon = false);
+	/// Create new item for unit.
+	BattleItem *createItemForUnit(const std::string& type, BattleUnit *unit, bool fixedWeapon = false);
+	/// Create new buildin item for unit.
+	BattleItem *createItemForUnitBuildin(RuleItem *rule, BattleUnit *unit);
+	/// Create new item for tile.
+	BattleItem *createItemForTile(RuleItem *rule, Tile *tile);
+	/// Create new item for tile.
+	BattleItem *createItemForTile(const std::string& type, Tile *tile);
 	/// Sets whether the mission was aborted.
 	void setAborted(bool flag);
 	/// Checks if the mission was aborted.
@@ -200,7 +337,7 @@ public:
 	/// Carries out new turn preparations.
 	void prepareNewTurn();
 	/// Revives unconscious units (healthcheck).
-	void reviveUnconsciousUnits();
+	void reviveUnconsciousUnits(bool noTU = false);
 	/// Removes the body item that corresponds to the unit.
 	void removeUnconsciousBodyItem(BattleUnit *bu);
 	/// Sets or tries to set a unit of a certain size on a certain position of the map.
@@ -221,8 +358,12 @@ public:
 	void setBattleState(BattlescapeState *bs);
 	/// Gets the highest ranked, living XCom unit.
 	BattleUnit* getHighestRankedXCom();
-	/// Gets the morale modifier for XCom based on the highest ranked, living XCom unit, or the modifier for the unit passed to this function.
-	int getMoraleModifier(BattleUnit* unit = 0);
+	/// Gets the morale modifier for the unit passed to this function.
+	int getUnitMoraleModifier(BattleUnit* unit);
+	/// Gets the morale loss modifier (by unit type) of the killed unit.
+	int getMoraleLossModifierWhenKilled(BattleUnit* unit);
+	/// Gets the morale modifier for Aliens based on they number or XCom based on the highest ranked soldier.
+	int getFactionMoraleModifier(bool player);
 	/// Checks whether a particular faction has eyes on *unit (whether any unit on that faction sees *unit).
 	bool eyesOnTarget(UnitFaction faction, BattleUnit* unit);
 	/// Attempts to place a unit on or near entryPoint.
@@ -252,7 +393,7 @@ public:
 	/// calculate the number of map modules remaining
 	void calculateModuleMap();
 	/// a shortcut to the geoscape save.
-	SavedGame *getGeoscapeSave();
+	SavedGame *getGeoscapeSave() const;
 	/// get the depth of the battlescape game.
 	int getDepth() const;
 	/// set the depth of the battlescape game.
@@ -263,14 +404,16 @@ public:
 	void setAmbientSound(int sound);
 	/// gets the ambient sound effect;
 	int getAmbientSound() const;
+	// gets ruleset.
+	const Mod *getMod() const;
 	/// gets the list of items we're guaranteed.
 	std::vector<BattleItem*> *getGuaranteedRecoveredItems();
 	/// gets the list of items we MIGHT get.
 	std::vector<BattleItem*> *getConditionalRecoveredItems();
 	/// Get the name of the music track.
-	std::string &getMusic();
+	const std::string &getMusic() const;
 	/// Set the name of the music track.
-	void setMusic(const std::string& track);
+	void setMusic(const std::string &track);
 	/// Sets the objective type for this mission.
 	void setObjectiveType(int type);
 	/// Gets the objective type of this mission.
@@ -291,8 +434,10 @@ public:
 	void setCheatTurn(int turn);
 	/// Check whether the battle has actually commenced or not.
 	bool isBeforeGame() const;
-	/// Checks if an item is usable on this map.
-	bool isItemUsable(RuleItem *item) const;
+	/// Randomly chooses hidden movement background.
+	void setRandomHiddenMovementBackground(const Mod *mod);
+	/// Gets the hidden movement background ID.
+	std::string getHiddenMovementBackground() const;
 	/// Reset all the unit hit state flags.
 	void resetUnitHitStates();
 };

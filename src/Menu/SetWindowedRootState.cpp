@@ -41,7 +41,7 @@ SetWindowedRootState::SetWindowedRootState(OptionsOrigin origin, OptionsVideoSta
 {
 	_screen = false;
 
-	// Create objects
+	// Create object
 	_window = new Window(this, 216, 100, 52, 50, POPUP_BOTH);
 	_txtTitle = new Text(206, 20, 57, 70);
 	_txtWindowedModePositionX = new Text(160, 10, 25, 90);
@@ -88,7 +88,7 @@ SetWindowedRootState::SetWindowedRootState(OptionsOrigin origin, OptionsVideoSta
 
 	centerAllSurfaces();
 
-	// Set up objects
+	// Set up object
 	_window->setBackground(_game->getMod()->getSurface("BACK01.SCR"));
 
 	_btnOk->setText(tr("STR_OK"));

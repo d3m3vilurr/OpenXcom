@@ -17,7 +17,9 @@
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <sstream>
+#include <exception>
 #include "version.h"
+#include "Engine/Exception.h"
 #include "Engine/Logger.h"
 #include "Engine/CrossPlatform.h"
 #include "Engine/Game.h"
@@ -55,7 +57,8 @@ void signalLogger(int sig)
 	exit(EXIT_FAILURE);
 }
 
-#include <exception>
+#endif
+
 void exceptionLogger()
 {
 	static bool logged = false;
@@ -77,9 +80,8 @@ void exceptionLogger()
 		error = "Unknown exception";
 	}
 	CrossPlatform::crashDump(0, error);
-	abort();
+	exit(EXIT_FAILURE);
 }
-#endif
 
 Game *game = 0;
 
@@ -87,31 +89,30 @@ Game *game = 0;
 // programming license revoked...
 int main(int argc, char *argv[])
 {
+#ifndef DUMP_CORE
 #ifdef _MSC_VER
 	// Uncomment to check memory leaks in VS
 	//_CrtSetDbgFlag ( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
 
 	SetUnhandledExceptionFilter(crashLogger);
+#ifdef __MINGW32__
+	// MinGW can use SJLJ or Dwarf exceptions, because of this SEH can't catch it.
+	std::set_terminate(exceptionLogger);
+#endif
 	// Uncomment to debug crash handler
 	// AddVectoredContinueHandler(1, crashLogger);
 #else
 	signal(SIGSEGV, signalLogger);
 	std::set_terminate(exceptionLogger);
 #endif
+#endif
 
 	CrossPlatform::getErrorDialog();
-
-#ifdef _DEBUG
-	Logger::reportingLevel() = LOG_DEBUG;
-#else
-	Logger::reportingLevel() = LOG_INFO;
-#endif
-	if (!Options::init(argc, argv))
+	CrossPlatform::processArgs(argc, argv);
+	if (!Options::init())
 		return EXIT_SUCCESS;
 	std::ostringstream title;
 	title << "OpenXcom " << OPENXCOM_VERSION_SHORT << OPENXCOM_VERSION_GIT;
-	if (Options::verboseLogging)
-		Logger::reportingLevel() = LOG_VERBOSE;
 	Options::baseXResolution = Options::displayWidth;
 	Options::baseYResolution = Options::displayHeight;
 
@@ -125,6 +126,14 @@ int main(int argc, char *argv[])
 	return EXIT_SUCCESS;
 }
 
+namespace OpenXcom
+{
+	Exception::Exception(const std::string &msg) : runtime_error(msg) {
+#ifdef DUMP_CORE
+		__builtin_trap();
+#endif
+	}
+}
 
 #ifdef __MORPHOS__
 const char Version[] = "$VER: OpenXCom " OPENXCOM_VERSION_SHORT " (" __AMIGADATE__  ")";

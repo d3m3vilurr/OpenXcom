@@ -38,7 +38,9 @@ public:
 	/// Handler for clicking the Original X-Com button.
 	void btnOldClick(Action *action);
 	/// Handler for clicking the Saves list.
-	void lstSavesPress(Action *action);
+	void lstSavesPress(Action *action) override;
+	void init() override;
+	void loadSave(size_t list_idx);
 };
 
 }

@@ -16,12 +16,21 @@
  * You should have received a copy of the GNU General Public License
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 #include "BattleItem.h"
 #include "BattleUnit.h"
 #include "Tile.h"
+#include "SavedGame.h"
+#include "SavedBattleGame.h"
 #include "../Mod/Mod.h"
 #include "../Mod/RuleItem.h"
 #include "../Mod/RuleInventory.h"
+#include "../Engine/Surface.h"
+#include "../Engine/SurfaceSet.h"
+#include "../Engine/Script.h"
+#include "../Engine/ScriptBind.h"
+#include "../Engine/RNG.h"
+#include "../fmath.h"
 
 namespace OpenXcom
 {
@@ -31,11 +40,12 @@ namespace OpenXcom
  * @param rules Pointer to ruleset.
  * @param id The id of the item.
  */
-BattleItem::BattleItem(RuleItem *rules, int *id) : _id(*id), _rules(rules), _owner(0), _previousOwner(0), _unit(0), _tile(0), _inventorySlot(0), _inventoryX(0), _inventoryY(0), _ammoItem(0), _fuseTimer(-1), _ammoQuantity(0), _painKiller(0), _heal(0), _stimulant(0), _XCOMProperty(false), _droppedOnAlienTurn(false), _isAmmo(false)
+BattleItem::BattleItem(const RuleItem *rules, int *id) : _id(*id), _rules(rules), _owner(0), _previousOwner(0), _unit(0), _tile(0), _inventorySlot(0), _inventoryX(0), _inventoryY(0), _ammoItem{ }, _fuseTimer(-1), _ammoQuantity(0), _painKiller(0), _heal(0), _stimulant(0), _XCOMProperty(false), _droppedOnAlienTurn(false), _isAmmo(false), _isWeaponWithAmmo(false), _fuseEnabled(false)
 {
 	(*id)++;
 	if (_rules)
 	{
+		_confMelee = _rules->getConfigMelee();
 		setAmmoQuantity(_rules->getClipSize());
 		if (_rules->getBattleType() == BT_MEDIKIT)
 		{
@@ -43,11 +53,35 @@ BattleItem::BattleItem(RuleItem *rules, int *id) : _id(*id), _rules(rules), _own
 			setPainKillerQuantity (_rules->getPainKillerQuantity());
 			setStimulantQuantity (_rules->getStimulantQuantity());
 		}
-
 		// weapon does not need ammo, ammo item points to weapon
-		else if ((_rules->getBattleType() == BT_FIREARM || _rules->getBattleType() == BT_MELEE) && _rules->getCompatibleAmmo()->empty())
+		else if (_rules->getBattleType() == BT_FIREARM || _rules->getBattleType() == BT_MELEE)
 		{
-			_ammoItem = this;
+			_confAimedOrLaunch = _rules->getConfigAimed();
+			_confAuto = _rules->getConfigAuto();
+			_confSnap = _rules->getConfigSnap();
+			bool showSelfAmmo = _rules->getClipSize() > 0;
+			for (int slot = 0; slot < RuleItem::AmmoSlotMax; ++slot)
+			{
+				bool used = false;
+				used |= (_confAimedOrLaunch && _confAimedOrLaunch->ammoSlot == slot);
+				used |= (_confAuto && _confAuto->ammoSlot == slot);
+				used |= (_confSnap && _confSnap->ammoSlot == slot);
+				used |= (_confMelee && _confMelee->ammoSlot == slot);
+				if (_rules->getCompatibleAmmoForSlot(slot)->empty())
+				{
+					if (used && showSelfAmmo)
+					{
+						_ammoVisibility[slot] = true;
+						showSelfAmmo = false;
+					}
+					_ammoItem[slot] = this;
+				}
+				else
+				{
+					_ammoVisibility[slot] = used;
+					_isWeaponWithAmmo = true;
+				}
+			}
 		}
 	}
 }
@@ -64,7 +98,7 @@ BattleItem::~BattleItem()
  * @param node YAML node.
  * @param mod Mod for the item.
  */
-void BattleItem::load(const YAML::Node &node, Mod *mod)
+void BattleItem::load(const YAML::Node &node, Mod *mod, const ScriptGlobal *shared)
 {
 	std::string slot = node["inventoryslot"].as<std::string>("NULL");
 	if (slot != "NULL")
@@ -86,15 +120,17 @@ void BattleItem::load(const YAML::Node &node, Mod *mod)
 	_heal = node["heal"].as<int>(_heal);
 	_stimulant = node["stimulant"].as<int>(_stimulant);
 	_fuseTimer = node["fuseTimer"].as<int>(_fuseTimer);
+	_fuseEnabled = node["fuseEnabed"].as<bool>(_fuseEnabled);
 	_droppedOnAlienTurn = node["droppedOnAlienTurn"].as<bool>(_droppedOnAlienTurn);
 	_XCOMProperty = node["XCOMProperty"].as<bool>(_XCOMProperty);
+	_scriptValues.load(node, shared);
 }
 
 /**
  * Saves the item to a YAML file.
  * @return YAML node.
  */
-YAML::Node BattleItem::save() const
+YAML::Node BattleItem::save(const ScriptGlobal *shared) const
 {
 	YAML::Node node;
 	node["id"] = _id;
@@ -113,10 +149,15 @@ YAML::Node BattleItem::save() const
 
 	if (_tile)
 		node["position"] = _tile->getPosition();
-	if (_ammoQuantity)
-		node["ammoqty"] = _ammoQuantity;
-	if (_ammoItem)
-		node["ammoItem"] = _ammoItem->getId();
+	node["ammoqty"] = _ammoQuantity;
+	if (_ammoItem[0])
+	{
+		node["ammoItem"] = _ammoItem[0]->getId();
+	}
+	for (int slot = 0; slot < RuleItem::AmmoSlotMax; ++slot)
+	{
+		node["ammoItemSlots"].push_back(_ammoItem[slot] ? _ammoItem[slot]->getId() : -1);
+	}
 
 	if (_rules && _rules->getBattleType() == BT_MEDIKIT)
 	{
@@ -126,10 +167,13 @@ YAML::Node BattleItem::save() const
 	}
 	if (_fuseTimer != -1)
 		node["fuseTimer"] = _fuseTimer;
+	node["fuseEnabed"] = _fuseEnabled;
 	if (_droppedOnAlienTurn)
 		node["droppedOnAlienTurn"] = _droppedOnAlienTurn;
 	if (_XCOMProperty)
 		node["XCOMProperty"] = _XCOMProperty;
+	_scriptValues.save(node, shared);
+
 	return node;
 }
 
@@ -137,7 +181,7 @@ YAML::Node BattleItem::save() const
  * Gets the ruleset for the item's type.
  * @return Pointer to ruleset.
  */
-RuleItem *BattleItem::getRules() const
+const RuleItem *BattleItem::getRules() const
 {
 	return _rules;
 }
@@ -157,8 +201,180 @@ int BattleItem::getFuseTimer() const
  */
 void BattleItem::setFuseTimer(int turns)
 {
+	auto event = _rules->getFuseTriggerEvent();
 	_fuseTimer = turns;
+	if (_fuseTimer >= 0)
+	{
+		if (event->throwTrigger || event->proximityTrigger)
+		{
+			_fuseEnabled = false;
+		}
+		else if (event->defaultBehavior)
+		{
+			_fuseEnabled = true;
+		}
+		else
+		{
+			_fuseEnabled = false;
+		}
+	}
+	else
+	{
+		_fuseEnabled = false;
+	}
 }
+
+/**
+ * Gets if fuse was triggered.
+ */
+bool BattleItem::isFuseEnabled() const
+{
+	return _fuseEnabled;
+}
+
+/**
+ * Called at end of turn.
+ */
+void BattleItem::fuseTimerEvent()
+{
+	auto event = _rules->getFuseTriggerEvent();
+	if (_fuseEnabled && getFuseTimer() > 0)
+	{
+		if (event->defaultBehavior)
+		{
+			if (_rules->getFuseTimerType() != BFT_INSTANT)
+			{
+				--_fuseTimer;
+			}
+		}
+	}
+}
+
+/**
+ * Get if item can trigger end of turn effect.
+ * @return True if grenade should explode or other item removed
+ */
+bool BattleItem::fuseEndTurnEffect()
+{
+	auto event = _rules->getFuseTriggerEvent();
+	auto check = [&]
+	{
+		if (_fuseEnabled && getFuseTimer() == 0)
+		{
+			if (event->defaultBehavior)
+			{
+				return _rules->getFuseTimerType() != BFT_INSTANT;
+			}
+		}
+		return false;
+	};
+
+	if (check())
+	{
+		if (RNG::percent(_rules->getSpecialChance()))
+		{
+			return true;
+		}
+		else
+		{
+			//grenade fail to explode or item to get removed.
+			if (_rules->getFuseTimerType() == BFT_SET)
+			{
+				setFuseTimer(1);
+			}
+			else
+			{
+				setFuseTimer(-1);
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * Called when item is throw.
+ */
+bool BattleItem::fuseThrowEvent()
+{
+	auto event = _rules->getFuseTriggerEvent();
+	auto check = [&]
+	{
+		if (_fuseEnabled && getFuseTimer() == 0)
+		{
+			if (event->throwExplode)
+			{
+				return true;
+			}
+			else if (event->defaultBehavior)
+			{
+				return _rules->getBattleType() == BT_GRENADE && (Options::battleInstantGrenade || _rules->getFuseTimerType() == BFT_INSTANT);
+			}
+		}
+		return false;
+	};
+
+	if (event->throwTrigger)
+	{
+		if (_rules->getFuseTimerType() == BFT_NONE)
+		{
+			_fuseEnabled = true;
+			_fuseTimer = 0;
+		}
+		else if (_fuseTimer >= 0)
+		{
+			_fuseEnabled = true;
+		}
+	}
+
+	if (check())
+	{
+		return RNG::percent(_rules->getSpecialChance());
+	}
+	return false;
+}
+
+/**
+ * Called when item is throw.
+ */
+bool BattleItem::fuseProximityEvent()
+{
+	auto event = _rules->getFuseTriggerEvent();
+	auto check = [&]
+	{
+		if (_fuseEnabled && getFuseTimer() >= 0)
+		{
+			if (event->proximityExplode)
+			{
+				return true;
+			}
+			else if (event->defaultBehavior)
+			{
+				return _rules->getBattleType() == BT_PROXIMITYGRENADE;
+			}
+		}
+		return false;
+	};
+
+	if (event->proximityTrigger)
+	{
+		if (_rules->getFuseTimerType() == BFT_NONE)
+		{
+			_fuseEnabled = true;
+			_fuseTimer = 0;
+		}
+		else if (_fuseTimer >= 0)
+		{
+			_fuseEnabled = true;
+		}
+	}
+
+	if (check())
+	{
+		return RNG::percent(_rules->getSpecialChance());
+	}
+	return false;
+}
+
 
 /**
  * Gets the quantity of ammo in this item.
@@ -201,7 +417,16 @@ bool BattleItem::spendBullet()
  * Gets the item's owner.
  * @return Pointer to Battleunit.
  */
-BattleUnit *BattleItem::getOwner() const
+BattleUnit *BattleItem::getOwner()
+{
+	return _owner;
+}
+
+/**
+ * Gets the item's owner.
+ * @return Pointer to Battleunit.
+ */
+const BattleUnit *BattleItem::getOwner() const
 {
 	return _owner;
 }
@@ -210,7 +435,16 @@ BattleUnit *BattleItem::getOwner() const
  * Gets the item's previous owner.
  * @return Pointer to Battleunit.
  */
-BattleUnit *BattleItem::getPreviousOwner() const
+BattleUnit *BattleItem::getPreviousOwner()
+{
+	return _previousOwner;
+}
+
+/**
+ * Gets the item's previous owner.
+ * @return Pointer to Battleunit.
+ */
+const BattleUnit *BattleItem::getPreviousOwner() const
 {
 	return _previousOwner;
 }
@@ -240,22 +474,30 @@ void BattleItem::setPreviousOwner(BattleUnit *owner)
  */
 void BattleItem::moveToOwner(BattleUnit *owner)
 {
-	_previousOwner = _owner ? _owner:owner;
-	_owner = owner;
-	if (_previousOwner != 0)
+	if (_tile)
 	{
-		for (std::vector<BattleItem*>::iterator i = _previousOwner->getInventory()->begin(); i != _previousOwner->getInventory()->end(); ++i)
+		_tile->removeItem(this);
+		_tile = nullptr;
+	}
+	if (owner != _owner)
+	{
+		setOwner(owner);
+
+		if (_previousOwner)
 		{
-			if ((*i) == this)
+			for (std::vector<BattleItem*>::iterator i = _previousOwner->getInventory()->begin(); i != _previousOwner->getInventory()->end(); ++i)
 			{
-				_previousOwner->getInventory()->erase(i);
-				break;
+				if ((*i) == this)
+				{
+					_previousOwner->getInventory()->erase(i);
+					break;
+				}
 			}
 		}
-	}
-	if (_owner != 0)
-	{
-		_owner->getInventory()->push_back(this);
+		if (_owner)
+		{
+			_owner->getInventory()->push_back(this);
+		}
 	}
 }
 
@@ -322,7 +564,7 @@ void BattleItem::setSlotY(int y)
  */
 bool BattleItem::occupiesSlot(int x, int y, BattleItem *item) const
 {
-	if (item == this)
+	if (item == this || !_inventorySlot)
 		return false;
 	if (_inventorySlot->getType() == INV_HAND)
 		return true;
@@ -341,56 +583,389 @@ bool BattleItem::occupiesSlot(int x, int y, BattleItem *item) const
 }
 
 /**
- * Gets the item's ammo item.
- * @return The ammo item.
+ * Gets the item's floor sprite.
+ * @return Return current floor sprite.
  */
-BattleItem *BattleItem::getAmmoItem()
+Surface *BattleItem::getFloorSprite(SurfaceSet *set, int animFrame, int shade) const
 {
-	return _ammoItem;
+	int i = _rules->getFloorSprite();
+	if (i != -1)
+	{
+		Surface *surf = set->getFrame(i);
+		//enforce compatibility with basic version
+		if (surf == nullptr)
+		{
+			throw Exception("Invlid surface set 'FLOOROB.PCK' for item '" + _rules->getType() + "': not enough frames");
+		}
+
+		ModScript::SelectItemSprite::Output arg{ i, 0 };
+		ModScript::SelectItemSprite::Worker work{ this, BODYPART_ITEM_FLOOR, animFrame, shade };
+		work.execute(_rules->getScript<ModScript::SelectItemSprite>(), arg);
+
+		auto newSurf = set->getFrame(arg.getFirst());
+		if (newSurf == nullptr)
+		{
+			newSurf = surf;
+		}
+		return newSurf;
+	}
+	else
+	{
+		return nullptr;
+	}
+}
+
+/**
+ * Gets the item's inventory sprite.
+ * @return Return current inventory sprite.
+ */
+Surface *BattleItem::getBigSprite(SurfaceSet *set, int animFrame) const
+{
+	int i = _rules->getBigSprite();
+	if (i != -999)
+	{
+		Surface *surf = set->getFrame(i);
+		//enforce compatibility with basic version
+		if (surf == nullptr)
+		{
+			throw Exception("Invlid surface set 'BIGOBS.PCK' for item '" + _rules->getType() + "': not enough frames");
+		}
+
+		ModScript::SelectItemSprite::Output arg{ i, 0 };
+		ModScript::SelectItemSprite::Worker work{ this, BODYPART_ITEM_INVENTORY, animFrame, 0 };
+		work.execute(_rules->getScript<ModScript::SelectItemSprite>(), arg);
+
+		auto newSurf = set->getFrame(arg.getFirst());
+		if (newSurf == nullptr)
+		{
+			newSurf = surf;
+		}
+		return newSurf;
+	}
+	else
+	{
+		return nullptr;
+	}
+}
+
+/**
+ * Check if item use any ammo.
+ * @return True if item accept ammo.
+ */
+bool BattleItem::isWeaponWithAmmo() const
+{
+	return _isWeaponWithAmmo;
+}
+
+/**
+ * Check if weapon have enought ammo to shoot.
+ * @return True if have ammo.
+ */
+bool BattleItem::haveAnyAmmo() const
+{
+	if (!_isWeaponWithAmmo)
+	{
+		return true;
+	}
+	auto type = _rules->getBattleType();
+	if (type == BT_MELEE)
+	{
+		return getAmmoForAction(BA_HIT);
+	}
+	else
+	{
+		return getAmmoForAction(BA_AIMEDSHOT) ||
+			getAmmoForAction(BA_AUTOSHOT) ||
+			getAmmoForAction(BA_SNAPSHOT);
+	}
+}
+
+/**
+ * Check if weapon have all ammo slot filled.
+ * @return True if all ammo slots are fill.
+ */
+bool BattleItem::haveAllAmmo() const
+{
+	for (const auto& a : _ammoItem)
+	{
+		if (a == nullptr)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Sets the item's ammo item.
+ * @param item The ammo item.
+ * @return True if item fit to weapon.
+ */
+bool BattleItem::setAmmoPreMission(BattleItem *item)
+{
+	int slot = _rules->getSlotForAmmo(item->getRules()->getType());
+	if (slot >= 0)
+	{
+		if (_ammoItem[slot])
+			return false;
+
+		setAmmoForSlot(slot, item);
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Get configuration of action on that item.
+ * @param action Action type.
+ * @return Return config of item action or nullptr for wrong action type or item.
+ */
+const RuleItemAction *BattleItem::getActionConf(BattleActionType action) const
+{
+	switch (action)
+	{
+	case BA_LAUNCH:
+	case BA_AIMEDSHOT: return _confAimedOrLaunch;
+	case BA_AUTOSHOT: return _confAuto;
+	case BA_SNAPSHOT: return _confSnap;
+	case BA_HIT: return _confMelee;
+	default: return nullptr;
+	}
+}
+
+/**
+ * Check if attack shoot in arc.
+ */
+bool BattleItem::getArcingShot(BattleActionType action) const
+{
+	if (_rules->getArcingShot())
+	{
+		return true;
+	}
+
+	auto conf = getActionConf(action);
+	if (conf && conf->arcing)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Determines if this item uses ammo.
+ */
+bool BattleItem::needsAmmoForAction(BattleActionType action) const
+{
+	auto conf = getActionConf(action);
+	if (!conf || conf->ammoSlot == -1)
+	{
+		return false;
+	}
+
+	return needsAmmoForSlot(conf->ammoSlot);
+}
+
+/**
+ * Get ammo used by action.
+ * @param action Battle Action done using this item.
+ * @return
+ */
+const BattleItem *BattleItem::getAmmoForAction(BattleActionType action) const
+{
+	auto conf = getActionConf(action);
+	if (!conf)
+	{
+		return nullptr;
+	}
+	if (conf->ammoSlot == -1)
+	{
+		return this;
+	}
+
+	auto ammo = getAmmoForSlot(conf->ammoSlot);
+	if (ammo && ammo->getAmmoQuantity() == 0)
+	{
+		return nullptr;
+	}
+	return ammo;
+}
+
+/**
+ * Get ammo used by action.
+ * @param action Battle Action done using this item.
+ * @param message Error message if weapon don't have ammo.
+ * @return
+ */
+BattleItem *BattleItem::getAmmoForAction(BattleActionType action, std::string* message)
+{
+	auto conf = getActionConf(action);
+	if (!conf)
+	{
+		return nullptr;
+	}
+	if (conf->ammoSlot == -1)
+	{
+		return this;
+	}
+
+	auto ammo = getAmmoForSlot(conf->ammoSlot);
+	if (ammo == nullptr)
+	{
+		if (message) *message = "STR_NO_AMMUNITION_LOADED";
+		return nullptr;
+	}
+	if (ammo->getAmmoQuantity() == 0)
+	{
+		if (message) *message = "STR_NO_ROUNDS_LEFT";
+		return nullptr;
+	}
+	return ammo;
+}
+
+/**
+ * Spend weapon ammo, if depleded remove clip.
+ * @param action Battle Action done using this item.
+ * @param save Save game.
+ */
+void BattleItem::spendAmmoForAction(BattleActionType action, SavedBattleGame* save)
+{
+	if (save->getDebugMode() || getActionConf(action)->ammoSlot == -1)
+	{
+		return;
+	}
+
+	auto ammo = getAmmoForAction(action);
+	if (ammo)
+	{
+		if (ammo->getRules()->getClipSize() > 0 && ammo->spendBullet() == false)
+		{
+			save->removeItem(ammo);
+			ammo->setIsAmmo(false);
+			if (ammo != this)
+			{
+				for (auto& a : _ammoItem)
+				{
+					if (a == ammo)
+					{
+						a = nullptr;
+					}
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Check how many shoots attack can perform.
+ * @param action Attack type.
+ * @param shotCount Current shot count.
+ * @return True if still can shoot.
+ */
+bool BattleItem::haveNextShotsForAction(BattleActionType action, int shotCount) const
+{
+	auto conf = getActionConf(action);
+	if (conf)
+	{
+		return shotCount < conf->shots;
+	}
+	return false;
 }
 
 /**
  * Determines if the item uses ammo.
  * @return True if ammo is used.
  */
-bool BattleItem::needsAmmo() const
+bool BattleItem::needsAmmoForSlot(int slot) const
 {
-	return !(_ammoItem == this); // no ammo for this weapon is needed
+	return (_isWeaponWithAmmo && _ammoItem[slot] != this); // no ammo for this weapon is needed
 }
 
 /**
- * Sets the item's ammo item.
- * @param item The ammo item.
- * @return -2 when ammo doesn't fit, or -1 when weapon already contains ammo.
+ * Set ammo slot with new ammo
+ * @param slot Ammo slot position.
+ * @param item Ammo item.
+ * @return Old item if was set.
  */
-int BattleItem::setAmmoItem(BattleItem *item)
+BattleItem *BattleItem::setAmmoForSlot(int slot, BattleItem* item)
 {
-	if (!needsAmmo()) return -2;
-
-	if (item == 0)
+	if (!needsAmmoForSlot(slot))
 	{
-		if (_ammoItem)
-		{
-			_ammoItem->setIsAmmo(false);
-		}
-		_ammoItem = 0;
-		return 0;
+		return nullptr;
 	}
 
-	if (_ammoItem)
-		return -1;
-
-	for (std::vector<std::string>::iterator i = _rules->getCompatibleAmmo()->begin(); i != _rules->getCompatibleAmmo()->end(); ++i)
+	BattleItem *oldItem = _ammoItem[slot];
+	if (oldItem)
 	{
-		if (*i == item->getRules()->getType())
+		oldItem->setIsAmmo(false);
+	}
+	_ammoItem[slot] = item;
+	if (item)
+	{
+		item->moveToOwner(nullptr);
+		item->setSlot(nullptr);
+		item->setIsAmmo(true);
+	}
+	return oldItem;
+}
+
+/**
+ * Gets the item's ammo item.
+ * @return The ammo item.
+ */
+BattleItem *BattleItem::getAmmoForSlot(int slot)
+{
+	return _ammoItem[slot];
+}
+
+/**
+ * Gets the item's ammo item.
+ * @return The ammo item.
+ */
+const BattleItem *BattleItem::getAmmoForSlot(int slot) const
+{
+	return _ammoItem[slot];
+}
+
+/**
+ * Get ammo count visibility for slot.
+ */
+bool BattleItem::isAmmoVisibleForSlot(int slot) const
+{
+	return _ammoVisibility[slot];
+}
+
+/**
+ * Get item weight with ammo weight.
+ * @return Weight.
+ */
+int BattleItem::getTotalWeight() const
+{
+	int weight = _rules->getWeight();
+	for (const auto& a : _ammoItem)
+	{
+		if (a && a != this)
 		{
-			_ammoItem = item;
-			item->setIsAmmo(true);
-			return 0;
+			weight += a->_rules->getWeight();
 		}
 	}
+	return weight;
+}
 
-	return -2;
+/**
+ * Get wayponts count of weapon or from ammo.
+ * @return Maximum waypoints count or -1 if unlimited.
+ */
+int BattleItem::getCurrentWaypoints() const
+{
+	int waypoints = _rules->getWaypoints();
+	auto ammo = getAmmoForAction(BA_LAUNCH);
+	if (waypoints == 0 && ammo && ammo != this)
+	{
+		waypoints = ammo->_rules->getWaypoints();
+	}
+	return waypoints;
 }
 
 /**
@@ -424,7 +999,16 @@ int BattleItem::getId() const
  * Gets the corpse's unit.
  * @return Pointer to BattleUnit.
  */
-BattleUnit *BattleItem::getUnit() const
+BattleUnit *BattleItem::getUnit()
+{
+	return _unit;
+}
+
+/**
+ * Gets the corpse's unit.
+ * @return Pointer to BattleUnit.
+ */
+const BattleUnit *BattleItem::getUnit() const
 {
 	return _unit;
 }
@@ -543,6 +1127,41 @@ void BattleItem::convertToCorpse(RuleItem *rules)
 }
 
 /**
+ * Check if item can glow in darkness.
+ * @return True if it glow.
+ */
+bool BattleItem::getGlow() const
+{
+	if (_rules->getBattleType() == BT_FLARE)
+	{
+		return (_rules->getFuseTriggerEvent()->defaultBehavior && _rules->getFuseTimerType() == BFT_NONE) || (_fuseEnabled && getFuseTimer() >= 0);
+	}
+	else
+	{
+		return false;
+	}
+}
+
+/**
+ * Gets range of glow in tiles.
+ * @return Range.
+ */
+int BattleItem::getGlowRange() const
+{
+	auto owner = _unit ? _unit : _previousOwner;
+	return owner ? _rules->getPowerBonus(owner) : _rules->getPower();
+}
+
+/**
+ * Gets update range needed by this item. For simplicity we always update to max range if it can glow.
+ * @return Range.
+ */
+int BattleItem::getVisibilityUpdateRange() const
+{
+	return _rules->getBattleType() == BT_FLARE ? getGlowRange() : 1;
+}
+
+/**
  * Sets the flag on this item indicating whether or not it is a clip used in a weapon.
  * @param ammo set the ammo flag to this.
  */
@@ -558,6 +1177,291 @@ void BattleItem::setIsAmmo(bool ammo)
 bool BattleItem::isAmmo() const
 {
 	return _isAmmo;
+}
+
+
+namespace
+{
+
+struct getAmmoForSlotScript
+{
+	static RetEnum func(BattleItem *weapon, BattleItem *&ammo, int slot)
+	{
+		if (weapon && slot >= 0 && slot < RuleItem::AmmoSlotMax)
+		{
+			ammo = weapon->getAmmoForSlot(slot);
+		}
+		else
+		{
+			ammo = nullptr;
+		}
+		return RetContinue;
+	}
+};
+
+struct getAmmoForSlotConstScript
+{
+	static RetEnum func(const BattleItem *weapon, const BattleItem *&ammo, int slot)
+	{
+		if (weapon && slot >= 0 && slot < RuleItem::AmmoSlotMax)
+		{
+			ammo = weapon->getAmmoForSlot(slot);
+		}
+		else
+		{
+			ammo = nullptr;
+		}
+		return RetContinue;
+	}
+};
+
+struct getAmmoItemScript
+{
+	static RetEnum func(BattleItem *weapon, BattleItem *&ammo)
+	{
+		return getAmmoForSlotScript::func(weapon, ammo, 0);
+	}
+};
+
+struct getAmmoItemConstScript
+{
+	static RetEnum func(const BattleItem *weapon, const BattleItem *&ammo)
+	{
+		return getAmmoForSlotConstScript::func(weapon, ammo, 0);
+	}
+};
+
+struct getAmmoForActionScript
+{
+	static RetEnum func(BattleItem *weapon, BattleItem *&ammo, int action)
+	{
+		BattleActionType bat = (BattleActionType)action;
+		if (weapon)
+		{
+			ammo = weapon->getAmmoForAction(bat);
+		}
+		else
+		{
+			ammo = nullptr;
+		}
+		return RetContinue;
+	}
+};
+
+struct getAmmoForActionConstScript
+{
+	static RetEnum func(const BattleItem *weapon, const BattleItem *&ammo, int action)
+	{
+		BattleActionType bat = (BattleActionType)action;
+		if (weapon)
+		{
+			ammo = weapon->getAmmoForAction(bat);
+		}
+		else
+		{
+			ammo = nullptr;
+		}
+		return RetContinue;
+	}
+};
+
+std::string debugDisplayScript(const BattleItem* bt)
+{
+	if (bt)
+	{
+		auto rule = bt->getRules();
+		std::string s;
+		s += BattleItem::ScriptName;
+		s += "(name: \"";
+		s += rule->getName();
+		s += "\" id: ";
+		s += std::to_string(bt->getId());
+
+		auto clipSize = rule->getClipSize();
+		if (clipSize > 0)
+		{
+			s += " ammo: ";
+			s += std::to_string(bt->getAmmoQuantity());
+			s += "/";
+			s += std::to_string(clipSize);
+		}
+		s += ")";
+		return s;
+	}
+	else
+	{
+		return "null";
+	}
+}
+
+void setFuseTimerScript(BattleItem* bt, int i)
+{
+	if (bt)
+	{
+		bt->setFuseTimer(Clamp(i, 1, 100));
+	}
+}
+
+void setAmmoQuantityScript(BattleItem* bt, int i)
+{
+	if (bt)
+	{
+		bt->setAmmoQuantity(Clamp(i, 1, bt->getRules()->getClipSize()));
+	}
+}
+
+void setHealQuantityScript(BattleItem* bt, int i)
+{
+	if (bt)
+	{
+		bt->setHealQuantity(Clamp(i, 0, bt->getRules()->getHealQuantity()));
+	}
+}
+
+void setPainKillerQuantityScript(BattleItem* bt, int i)
+{
+	if (bt)
+	{
+		bt->setPainKillerQuantity(Clamp(i, 0, bt->getRules()->getPainKillerQuantity()));
+	}
+}
+
+void setStimulantQuantityScript(BattleItem* bt, int i)
+{
+	if (bt)
+	{
+		bt->setStimulantQuantity(Clamp(i, 0, bt->getRules()->getStimulantQuantity()));
+	}
+}
+
+}
+
+/**
+ * Register BattleItem in script parser.
+ * @param parser Script parser.
+ */
+void BattleItem::ScriptRegister(ScriptParserBase* parser)
+{
+	parser->registerPointerType<Mod>();
+	parser->registerPointerType<RuleItem>();
+	parser->registerPointerType<BattleUnit>();
+
+	Bind<BattleItem> bi = { parser };
+
+	bi.addRules<RuleItem, &BattleItem::getRules>("getRuleItem");
+	bi.addPair<BattleUnit, &BattleItem::getUnit, &BattleItem::getUnit>("getBattleUnit");
+	bi.addFunc<getAmmoItemScript>("getAmmoItem");
+	bi.addFunc<getAmmoItemConstScript>("getAmmoItem");
+	bi.addFunc<getAmmoForSlotScript>("getAmmoForSlot");
+	bi.addFunc<getAmmoForSlotConstScript>("getAmmoForSlot");
+	bi.addFunc<getAmmoForActionScript>("getAmmoForAction");
+	bi.addFunc<getAmmoForActionConstScript>("getAmmoForAction");
+	bi.addPair<BattleUnit, &BattleItem::getPreviousOwner, &BattleItem::getPreviousOwner>("getPreviousOwner");
+	bi.addPair<BattleUnit, &BattleItem::getOwner, &BattleItem::getOwner>("getOwner");
+	bi.add<&BattleItem::getId>("getId");
+	bi.add<&BattleItem::getGlow>("getGlow");
+	bi.add<&BattleItem::getTotalWeight>("getTotalWeight");
+	bi.add<&BattleItem::isAmmo>("isAmmo");
+
+	bi.add<&BattleItem::getAmmoQuantity>("getAmmoQuantity");
+	bi.add<&setAmmoQuantityScript>("setAmmoQuantity");
+
+	bi.add<&BattleItem::getFuseTimer>("getFuseTimer");
+	bi.add<&setFuseTimerScript>("setFuseTimer");
+
+	bi.add<&BattleItem::isFuseEnabled>("isFuseEnabled");
+
+	bi.add<&BattleItem::getHealQuantity>("getHealQuantity");
+	bi.add<&setHealQuantityScript>("setHealQuantity");
+
+	bi.add<&BattleItem::getPainKillerQuantity>("getPainKillerQuantity");
+	bi.add<&setPainKillerQuantityScript>("setPainKillerQuantity");
+
+	bi.add<&BattleItem::getStimulantQuantity>("getStimulantQuantity");
+	bi.add<&setStimulantQuantityScript>("setStimulantQuantity");
+
+	bi.addScriptValue<&BattleItem::_scriptValues>();
+	bi.addDebugDisplay<&debugDisplayScript>();
+
+	bi.addCustomConst("BA_AUTOSHOT", BA_AUTOSHOT);
+	bi.addCustomConst("BA_SNAPSHOT", BA_SNAPSHOT);
+	bi.addCustomConst("BA_AIMEDSHOT", BA_AIMEDSHOT);
+	bi.addCustomConst("BA_LAUNCH", BA_LAUNCH);
+	bi.addCustomConst("BA_HIT", BA_HIT);
+	bi.addCustomConst("BA_NONE", BA_NONE);
+}
+
+namespace
+{
+
+void commonImpl(BindBase& b, Mod* mod)
+{
+	b.addCustomPtr<const Mod>("rules", mod);
+
+	b.addCustomConst("blit_item_righthand", BODYPART_ITEM_RIGHTHAND);
+	b.addCustomConst("blit_item_lefthand", BODYPART_ITEM_LEFTHAND);
+	b.addCustomConst("blit_item_floor", BODYPART_ITEM_FLOOR);
+	b.addCustomConst("blit_item_big", BODYPART_ITEM_INVENTORY);
+}
+
+}
+
+/**
+ * Constructor of recolor script parser.
+ */
+ModScript::RecolorItemParser::RecolorItemParser(ScriptGlobal* shared, const std::string& name, Mod* mod) : ScriptParserEvents{ shared, name, "new_pixel", "old_pixel", "item", "blit_part", "anim_frame", "shade" }
+{
+	BindBase b { this };
+
+	commonImpl(b, mod);
+
+	setDefault("add_shade new_pixel shade; return new_pixel;");
+}
+
+/**
+ * Constructor of select sprite script parser.
+ */
+ModScript::SelectItemParser::SelectItemParser(ScriptGlobal* shared, const std::string& name, Mod* mod) : ScriptParserEvents{ shared, name, "sprite_index", "sprite_offset", "item", "blit_part", "anim_frame", "shade" }
+{
+	BindBase b { this };
+
+	commonImpl(b, mod);
+
+	setDefault("add sprite_index sprite_offset; return sprite_index;");
+}
+
+ModScript::CreateItemParser::CreateItemParser(ScriptGlobal* shared, const std::string& name, Mod* mod) : ScriptParserEvents{ shared, name, "item", "battle_game", "turn", }
+{
+	BindBase b { this };
+
+	b.addCustomPtr<const Mod>("rules", mod);
+}
+
+ModScript::NewTurnItemParser::NewTurnItemParser(ScriptGlobal* shared, const std::string& name, Mod* mod) : ScriptParserEvents{ shared, name, "item", "battle_game", "turn", "side", }
+{
+	BindBase b { this };
+
+	b.addCustomPtr<const Mod>("rules", mod);
+}
+
+/**
+ * Init all required data in script using object data.
+ */
+void BattleItem::ScriptFill(ScriptWorkerBlit* w, BattleItem* item, int part, int anim_frame, int shade)
+{
+	w->clear();
+	if(item)
+	{
+		const auto &scr = item->getRules()->getScript<ModScript::RecolorItemSprite>();
+		if (scr)
+		{
+			w->update(scr, item, part, anim_frame, shade);
+		}
+		else
+		{
+			BattleUnit::ScriptFill(w, item->getUnit(), part, anim_frame, shade, 0);
+		}
+	}
 }
 
 }

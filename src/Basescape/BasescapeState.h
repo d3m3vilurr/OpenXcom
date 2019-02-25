@@ -29,6 +29,7 @@ class TextButton;
 class TextEdit;
 class Base;
 class Globe;
+class Timer;
 
 /**
  * Basescape screen that shows a base's layout
@@ -44,13 +45,17 @@ private:
 	TextButton *_btnNewBase, *_btnBaseInfo, *_btnSoldiers, *_btnCrafts, *_btnFacilities, *_btnResearch, *_btnManufacture, *_btnTransfer, *_btnPurchase, *_btnSell, *_btnGeoscape;
 	Base *_base;
 	Globe *_globe;
+#ifdef __MOBILE__
+	Timer *_longPressTimer;
+	bool _clickGuard;
+#endif
 public:
 	/// Creates the Basescape state.
 	BasescapeState(Base *base, Globe *globe);
 	/// Cleans up the Basescape state.
 	~BasescapeState();
 	/// Updates the base stats.
-	void init();
+	void init() override;
 	/// Sets a new base to display.
 	void setBase(Base *base);
 	/// Handler for clicking the Build New Base button.
@@ -79,16 +84,30 @@ public:
 	void viewLeftClick(Action *action);
 	/// Handler for right clicking the base view.
 	void viewRightClick(Action *action);
+	/// Handler for middle clicking the base view.
+	void viewMiddleClick(Action *action);
 	/// Handler for hovering the base view.
 	void viewMouseOver(Action *action);
 	/// Handler for hovering out of the base view.
 	void viewMouseOut(Action *action);
-	/// Handler for clicking the mini base view.
-	void miniClick(Action *action);
+	/// Handler for clicking the mini base view (left button).
+	void miniLeftClick(Action *action);
+	/// Handler for clicking the mini base view (right button).
+	void miniRightClick(Action *action);
 	/// Handler for changing the text on the Name edit.
 	void edtBaseChange(Action *action);
 	/// Handler for pressing a base selection hotkey.
 	void handleKeyPress(Action *action);
+#ifdef __MOBILE__
+	/// Pokes timer now and again
+	void think() override;
+	/// Handler for base view presses (starts _longPressTimer)
+	void viewPress(Action *action);
+	/// Handler for base view releases (stops _longPressTimer)
+	void viewRelease(Action *action);
+	/// Handler for timer event (long press action)
+	void viewLongPress();
+#endif
 };
 
 }

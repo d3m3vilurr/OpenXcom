@@ -16,7 +16,9 @@
  * You should have received a copy of the GNU General Public License
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
+#define _USE_MATH_DEFINES
 #include "Globe.h"
+#include <cmath>
 #include <algorithm>
 #include "../fmath.h"
 #include "../Engine/Action.h"
@@ -53,6 +55,7 @@
 #include "../Mod/RuleGlobe.h"
 #include "../Interface/Cursor.h"
 #include "../Engine/Screen.h"
+#include "../Engine/CrossPlatform.h"
 
 namespace OpenXcom
 {
@@ -87,7 +90,7 @@ struct GlobeStaticData
 	 * @param y cord of point where we getting this vector
 	 * @return normal vector of sphere surface
 	 */
-	static inline Cord circle_norm(double ox, double oy, double r, double x, double y)
+	inline Cord circle_norm(double ox, double oy, double r, double x, double y)
 	{
 		const double limit = r*r;
 		const double norm = 1./r;
@@ -221,7 +224,7 @@ struct CreateShadow
 		return Globe::OCEAN_SHADING && dest >= Globe::OCEAN_COLOR && dest < Globe::OCEAN_COLOR + 32;
 	}
 
-	static inline void func(Uint8& dest, const Cord& earth, const Cord& sun, const Sint16& noise, const int&)
+	static inline void func(Uint8& dest, const Cord& earth, const Cord& sun, const Sint16& noise)
 	{
 		if (dest && earth.z)
 		{
@@ -262,7 +265,7 @@ Globe::Globe(Game* game, int cenX, int cenY, int width, int height, int x, int y
 {
 	_rules = game->getMod()->getGlobe();
 	_texture = new SurfaceSet(*_game->getMod()->getSurfaceSet("TEXTURE.DAT"));
-	_markerSet = new SurfaceSet(*_game->getMod()->getSurfaceSet("GlobeMarkers"));
+	_markerSet = _game->getMod()->getSurfaceSet("GlobeMarkers");
 
 	_countries = new Surface(width, height, x, y);
 	_markers = new Surface(width, height, x, y);
@@ -302,7 +305,6 @@ Globe::~Globe()
 	delete _countries;
 	delete _markers;
 	delete _texture;
-	delete _markerSet;
 	delete _radars;
 	delete _clipper;
 
@@ -342,20 +344,26 @@ void Globe::polarToCart(double lon, double lat, double *x, double *y) const
  * @param y Y position of the cartesian point.
  * @param lon Pointer to the output longitude.
  * @param lat Pointer to the output latitude.
+ * @return True if conversion is possible, false otherwise
  */
-void Globe::cartToPolar(Sint16 x, Sint16 y, double *lon, double *lat) const
+	bool Globe::cartToPolar(Sint16 x, Sint16 y, double *lon, double *lat) const
 {
 	// Orthographic projection
 	x -= _cenX;
 	y -= _cenY;
 
 	double rho = sqrt((double)(x*x + y*y));
+	if (rho > _radius)
+	{
+		*lat = 4 * M_PI;
+		*lon = 4 * M_PI;
+		return false;
+	}
 	double c = asin(rho / _radius);
 	if ( AreSame(rho, 0.0) )
 	{
 		*lat = _cenLat;
 		*lon = _cenLon;
-
 	}
 	else
 	{
@@ -368,6 +376,7 @@ void Globe::cartToPolar(Sint16 x, Sint16 y, double *lon, double *lat) const
 		*lon += 2 * M_PI;
 	while (*lon >= 2 * M_PI)
 		*lon -= 2 * M_PI;
+	return true;
 }
 
 /**
@@ -400,8 +409,8 @@ double Globe::lastVisibleLat(double lon) const
 Polygon* Globe::getPolygonFromLonLat(double lon, double lat) const
 {
 	const double zDiscard=0.75f;
-	double coslat = cos(lat);
-	double sinlat = sin(lat);
+    double coslat = cos(lat);
+    double sinlat = sin(lat);
 
 	for (std::list<Polygon*>::iterator i = _rules->getPolygons()->begin(); i != _rules->getPolygons()->end(); ++i)
 	{
@@ -696,10 +705,9 @@ bool Globe::targetNear(Target* target, int x, int y) const
  * @param craft Only get craft targets.
  * @return List of pointers to targets.
  */
-std::vector<Target*> Globe::getTargets(int x, int y, bool craft) const
+std::vector<Target*> Globe::getTargets(int x, int y, bool craft, Craft *currentCraft) const
 {
 	std::vector<Target*> v;
-	if (!craft)
 	{
 		for (std::vector<Base*>::iterator i = _game->getSavedGame()->getBases()->begin(); i != _game->getSavedGame()->getBases()->end(); ++i)
 		{
@@ -713,6 +721,8 @@ std::vector<Target*> Globe::getTargets(int x, int y, bool craft) const
 
 			for (std::vector<Craft*>::iterator j = (*i)->getCrafts()->begin(); j != (*i)->getCrafts()->end(); ++j)
 			{
+				if ((*j) == currentCraft)
+					continue;
 				if ((*j)->getLongitude() == (*i)->getLongitude() && (*j)->getLatitude() == (*i)->getLatitude() && (*j)->getDestination() == 0)
 					continue;
 
@@ -824,12 +834,11 @@ void Globe::cache(std::list<Polygon*> *polygons, std::list<Polygon*> *cache)
  * @param firstcolor Offset of the first color to replace.
  * @param ncolors Amount of colors to replace.
  */
-void Globe::setPalette(SDL_Color *colors, int firstcolor, int ncolors)
+void Globe::setPalette(const SDL_Color *colors, int firstcolor, int ncolors)
 {
 	Surface::setPalette(colors, firstcolor, ncolors);
 
 	_texture->setPalette(colors, firstcolor, ncolors);
-	_markerSet->setPalette(colors, firstcolor, ncolors);
 
 	_countries->setPalette(colors, firstcolor, ncolors);
 	_markers->setPalette(colors, firstcolor, ncolors);
@@ -851,12 +860,6 @@ void Globe::think()
 void Globe::blink()
 {
 	_blink = -_blink;
-
-	for (std::map<int, Surface*>::iterator i = _markerSet->getFrames()->begin(); i != _markerSet->getFrames()->end(); ++i)
-	{
-		if (i->first != CITY_MARKER)
-			i->second->offset(_blink);
-	}
 
 	drawMarkers();
 }
@@ -989,8 +992,8 @@ Cord Globe::getSunDirection(double lon, double lat) const
 
 void Globe::drawShadow()
 {
-	ShaderMove<Cord> earth = ShaderMove<Cord>(_earthData[_zoom], getWidth(), getHeight());
-	ShaderRepeat<Sint16> noise = ShaderRepeat<Sint16>(_randomNoiseData, static_data.random_surf_size, static_data.random_surf_size);
+	auto earth = ShaderMove<Cord>(SurfaceRaw<Cord>(_earthData[_zoom], getWidth(), getHeight()));
+	auto noise = ShaderRepeat<Sint16>(SurfaceRaw<Sint16>(_randomNoiseData, static_data.random_surf_size, static_data.random_surf_size));
 
 	earth.setMove(_cenX-getWidth()/2, _cenY-getHeight()/2);
 
@@ -1064,7 +1067,7 @@ void Globe::XuLine(Surface* surface, Surface* src, double x1, double y1, double 
 }
 
 /**
- * Draws the radar ranges of player bases on the globe.
+ * Draws the radar ranges of player bases, player craft, alien bases and UFO hunter-killers on the globe.
  */
 void Globe::drawRadars()
 {
@@ -1126,7 +1129,7 @@ void Globe::drawRadars()
 					if ((*j)->getBuildTime() == 0)
 					{
 						tr = (*j)->getRules()->getRadarRange();
-						if (tr > range) range = tr;
+						if (tr < MAX_DRAW_RADAR_CIRCLE_RADIUS && tr > range) range = tr;
 					}
 				}
 				range = Nautical(range);
@@ -1136,15 +1139,49 @@ void Globe::drawRadars()
 
 		}
 
+		// Draw radars around player craft
 		for (std::vector<Craft*>::iterator j = (*i)->getCrafts()->begin(); j != (*i)->getCrafts()->end(); ++j)
 		{
 			if ((*j)->getStatus() != "STR_OUT")
 				continue;
 			lat=(*j)->getLatitude();
 			lon=(*j)->getLongitude();
-			range = Nautical((*j)->getRules()->getRadarRange());
+			range = Nautical((*j)->getCraftStats().radarRange);
 
 			if (range>0) drawGlobeCircle(lat,lon,range,24);
+		}
+	}
+
+	if (_game->getMod()->getDrawEnemyRadarCircles() > 0)
+	{
+		// Draw radars around UFO hunter-killers
+		for (std::vector<Ufo*>::iterator u = _game->getSavedGame()->getUfos()->begin(); u != _game->getSavedGame()->getUfos()->end(); ++u)
+		{
+			if ((*u)->isHunterKiller() && (*u)->getDetected())
+			{
+				if (_game->getMod()->getDrawEnemyRadarCircles() == 1 && !(*u)->getHyperDetected())
+				{
+					continue;
+				}
+				lat = (*u)->getLatitude();
+				lon = (*u)->getLongitude();
+				range = Nautical((*u)->getCraftStats().radarRange);
+
+				if (range > 0) drawGlobeCircle(lat, lon, range, 24);
+			}
+		}
+
+		// Draw radars around alien bases
+		for (std::vector<AlienBase*>::iterator ab = _game->getSavedGame()->getAlienBases()->begin(); ab != _game->getSavedGame()->getAlienBases()->end(); ++ab)
+		{
+			if ((*ab)->getDeployment()->getBaseDetectionRange() > 0 && (*ab)->isDiscovered())
+			{
+				lat = (*ab)->getLatitude();
+				lon = (*ab)->getLongitude();
+				range = Nautical((*ab)->getDeployment()->getBaseDetectionRange());
+
+				if (range > 0) drawGlobeCircle(lat, lon, range, 24);
+			}
 		}
 	}
 
@@ -1272,11 +1309,10 @@ void Globe::drawDetail()
 	// Draw the country names
 	if (_zoom >= 2)
 	{
-		Text *label = new Text(100, 9, 0, 0);
+		Text *label = new Text(150, 9, 0, 0);
 		label->setPalette(getPalette());
 		label->initText(_game->getMod()->getFont("FONT_BIG"), _game->getMod()->getFont("FONT_SMALL"), _game->getLanguage());
 		label->setAlign(ALIGN_CENTER);
-		label->setColor(COUNTRY_LABEL_COLOR);
 
 		Sint16 x, y;
 		for (std::vector<Country*>::iterator i = _game->getSavedGame()->getCountries()->begin(); i != _game->getSavedGame()->getCountries()->end(); ++i)
@@ -1288,12 +1324,51 @@ void Globe::drawDetail()
 			// Convert coordinates
 			polarToCart((*i)->getRules()->getLabelLongitude(), (*i)->getRules()->getLabelLatitude(), &x, &y);
 
-			label->setX(x - 50);
+			label->setX(x - 75);
 			label->setY(y);
 			label->setText(_game->getLanguage()->getString((*i)->getRules()->getType()));
-			label->blit(_countries);
+			label->setColor(COUNTRY_LABEL_COLOR);
+			if ((*i)->getRules()->getLabelColor() > 0)
+			{
+				label->setColor((*i)->getRules()->getLabelColor());
+			}
+			label->blit(_countries->getSurface());
 		}
 
+		delete label;
+	}
+
+	// Draw extra globe labels
+	{
+		Text *label = new Text(120, 18, 0, 0);
+		label->setPalette(getPalette());
+		label->initText(_game->getMod()->getFont("FONT_BIG"), _game->getMod()->getFont("FONT_SMALL"), _game->getLanguage());
+		label->setAlign(ALIGN_CENTER);
+
+		Sint16 x, y;
+		for (std::vector<std::string>::const_iterator i = _game->getMod()->getExtraGlobeLabelsList().begin(); i != _game->getMod()->getExtraGlobeLabelsList().end(); ++i)
+		{
+			RuleCountry *rule = _game->getMod()->getExtraGlobeLabel((*i), true);
+			if ((int)(_zoom) >= rule->getZoomLevel())
+			{
+				// Don't draw if label is facing back
+				if (pointBack(rule->getLabelLongitude(), rule->getLabelLatitude()))
+					continue;
+
+				// Convert coordinates
+				polarToCart(rule->getLabelLongitude(), rule->getLabelLatitude(), &x, &y);
+
+				label->setX(x - 60);
+				label->setY(y);
+				label->setText(_game->getLanguage()->getString(rule->getType()));
+				label->setColor(COUNTRY_LABEL_COLOR);
+				if (rule->getLabelColor() > 0)
+				{
+					label->setColor(rule->getLabelColor());
+				}
+				label->blit(_countries->getSurface());
+			}
+		}
 		delete label;
 	}
 
@@ -1323,7 +1398,7 @@ void Globe::drawDetail()
 				label->setX(x - 50);
 				label->setY(y + 2);
 				label->setText((*j)->getName(_game->getLanguage()));
-				label->blit(_countries);
+				label->blit(_countries->getSurface());
 			}
 		}
 		// Draw bases names
@@ -1336,7 +1411,7 @@ void Globe::drawDetail()
 			label->setY(y + 2);
 			label->setColor(BASE_LABEL_COLOR);
 			label->setText((*j)->getName());
-			label->blit(_countries);
+			label->blit(_countries->getSurface());
 		}
 
 		delete label;
@@ -1462,7 +1537,7 @@ void Globe::drawPath(Surface *surface, double lon1, double lat1, double lon2, do
 }
 
 /**
- * Draws the flight paths of player craft flying on the globe.
+ * Draws the flight paths of player craft (and hunting UFOs) flying on the globe.
  */
 void Globe::drawFlights()
 {
@@ -1505,6 +1580,20 @@ void Globe::drawFlights()
 		}
 	}
 
+	// Draw the hunting UFO flight paths
+	for (std::vector<Ufo*>::iterator u = _game->getSavedGame()->getUfos()->begin(); u != _game->getSavedGame()->getUfos()->end(); ++u)
+	{
+		if ((*u)->isHunting() && (*u)->getDetected())
+		{
+			double lon1 = (*u)->getLongitude();
+			double lon2 = (*u)->getDestination()->getLongitude();
+			double lat1 = (*u)->getLatitude();
+			double lat2 = (*u)->getDestination()->getLatitude();
+
+			drawPath(_radars, lon1, lat1, lon2, lat2);
+		}
+	}
+
 	// Unlock the surface
 	_radars->unlock();
 }
@@ -1519,10 +1608,39 @@ void Globe::drawTarget(Target *target, Surface *surface)
 	{
 		Sint16 x, y;
 		polarToCart(target->getLongitude(), target->getLatitude(), &x, &y);
-		Surface *marker = _markerSet->getFrame(target->getMarker());
-		marker->setX(x - marker->getWidth() / 2);
-		marker->setY(y - marker->getHeight() / 2);
-		marker->blit(surface);
+		auto i = target->getMarker();
+		auto marker = _markerSet->getFrame(i);
+		ShaderMove<const Uint8> surf{ marker, x - marker->getWidth() / 2, y - marker->getHeight() / 2 };
+		ShaderMove<Uint8> dest{ surface };
+
+		if (i == CITY_MARKER || _blink > 0)
+		{
+			ShaderDrawFunc(
+				[](Uint8& destStuff, Uint8 srcStuff)
+				{
+					if (srcStuff)
+					{
+						destStuff = srcStuff;
+					}
+				},
+				dest,
+				surf
+			);
+		}
+		else
+		{
+			ShaderDrawFunc(
+				[](Uint8& destStuff, Uint8 srcStuff)
+				{
+					if (srcStuff)
+					{
+						destStuff = srcStuff + 1;
+					}
+				},
+				dest,
+				surf
+			);
+		}
 	}
 }
 
@@ -1533,7 +1651,7 @@ void Globe::drawTarget(Target *target, Surface *surface)
 void Globe::drawMarkers()
 {
 	_markers->clear();
-
+	_markers->lock();
 	// Draw the base markers
 	for (std::vector<Base*>::iterator i = _game->getSavedGame()->getBases()->begin(); i != _game->getSavedGame()->getBases()->end(); ++i)
 	{
@@ -1572,13 +1690,14 @@ void Globe::drawMarkers()
 			drawTarget(*j, _markers);
 		}
 	}
+	_markers->unlock();
 }
 
 /**
  * Blits the globe onto another surface.
  * @param surface Pointer to another surface.
  */
-void Globe::blit(Surface *surface)
+void Globe::blit(SDL_Surface *surface)
 {
 	Surface::blit(surface);
 	_radars->blit(surface);
@@ -1594,7 +1713,7 @@ void Globe::blit(Surface *surface)
 void Globe::mouseOver(Action *action, State *state)
 {
 	double lon, lat;
-	cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
+	bool converted = cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
 
 	if (_isMouseScrolling && action->getDetails()->type == SDL_MOUSEMOTION)
 	{
@@ -1602,7 +1721,7 @@ void Globe::mouseOver(Action *action, State *state)
 		// the mouse-release event is missed for any reason.
 		// (checking: is the dragScroll-mouse-button still pressed?)
 		// However if the SDL is also missed the release event, then it is to no avail :(
-		if (0 == (SDL_GetMouseState(0, 0)&SDL_BUTTON(Options::geoDragScrollButton)))
+		if (0 == (CrossPlatform::getPointerState(0, 0)&SDL_BUTTON(Options::geoDragScrollButton)))
 		{ // so we missed again the mouse-release :(
 			// Check if we have to revoke the scrolling, because it was too short in time, so it was a click
 			if ((!_mouseMovedOverThreshold) && ((int)(SDL_GetTicks() - _mouseScrollingStartTime) <= (Options::dragScrollTimeTolerance)))
@@ -1615,15 +1734,15 @@ void Globe::mouseOver(Action *action, State *state)
 		}
 
 		_isMouseScrolled = true;
-
+#ifndef __MOBILE__
 		if (Options::touchEnabled == false)
 		{
 			// Set the mouse cursor back
 			SDL_EventState(SDL_MOUSEMOTION, SDL_IGNORE);
-			SDL_WarpMouse((_game->getScreen()->getWidth() - 100) / 2 , _game->getScreen()->getHeight() / 2);
+			SDL_WarpMouseInWindow(NULL, (_game->getScreen()->getWidth() - 100) / 2 , _game->getScreen()->getHeight() / 2);
 			SDL_EventState(SDL_MOUSEMOTION, SDL_ENABLE);
 		}
-
+#endif
 		// Check the threshold
 		_totalMouseMoveX += action->getDetails()->motion.xrel;
 		_totalMouseMoveY += action->getDetails()->motion.yrel;
@@ -1640,9 +1759,12 @@ void Globe::mouseOver(Action *action, State *state)
 		}
 		else
 		{
-			double newLon = -action->getDetails()->motion.xrel * ROTATE_LONGITUDE/(_zoom+1)/2;
+			double newLon = -((double)_totalMouseMoveX / action->getXScale()) * ROTATE_LONGITUDE/(_zoom+1)/2;
+			double newLat = -((double)_totalMouseMoveY / action->getYScale()) * ROTATE_LATITUDE/(_zoom+1)/2;
+			center(_lonBeforeMouseScrolling + newLon / (Options::geoScrollSpeed / 10), _latBeforeMouseScrolling + newLat / (Options::geoScrollSpeed / 10));
+			/* double newLon = -action->getDetails()->motion.xrel * ROTATE_LONGITUDE/(_zoom+1)/2;
 			double newLat = -action->getDetails()->motion.yrel * ROTATE_LATITUDE/(_zoom+1)/2;
-			center(_cenLon + newLon / (Options::geoScrollSpeed / 10), _cenLat + newLat / (Options::geoScrollSpeed / 10));
+			center(_cenLon + newLon / (Options::geoScrollSpeed / 10), _cenLat + newLat / (Options::geoScrollSpeed / 10));*/
 		}
 
 		if (Options::touchEnabled == false)
@@ -1664,7 +1786,7 @@ void Globe::mouseOver(Action *action, State *state)
 		action->getDetails()->motion.x = _xBeforeMouseScrolling; action->getDetails()->motion.y = _yBeforeMouseScrolling;
 	}
 	// Check for errors
-	if (lat == lat && lon == lon)
+	if (converted)
 	{
 		InteractiveSurface::mouseOver(action, state);
 	}
@@ -1678,13 +1800,15 @@ void Globe::mouseOver(Action *action, State *state)
 void Globe::mousePress(Action *action, State *state)
 {
 	double lon, lat;
-	cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
+	bool converted = cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
 
 	if (action->getDetails()->button.button == Options::geoDragScrollButton)
 	{
 		_isMouseScrolling = true;
 		_isMouseScrolled = false;
-		SDL_GetMouseState(&_xBeforeMouseScrolling, &_yBeforeMouseScrolling);
+		//SDL_GetMouseState(&_xBeforeMouseScrolling, &_yBeforeMouseScrolling);
+		_xBeforeMouseScrolling = action->getDetails()->button.x;
+		_yBeforeMouseScrolling = action->getDetails()->button.y;
 		_lonBeforeMouseScrolling = _cenLon;
 		_latBeforeMouseScrolling = _cenLat;
 		_totalMouseMoveX = 0; _totalMouseMoveY = 0;
@@ -1692,7 +1816,7 @@ void Globe::mousePress(Action *action, State *state)
 		_mouseScrollingStartTime = SDL_GetTicks();
 	}
 	// Check for errors
-	if (lat == lat && lon == lon)
+	if (converted)
 	{
 		InteractiveSurface::mousePress(action, state);
 	}
@@ -1706,15 +1830,36 @@ void Globe::mousePress(Action *action, State *state)
 void Globe::mouseRelease(Action *action, State *state)
 {
 	double lon, lat;
-	cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
+	bool converted = cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
 	if (action->getDetails()->button.button == Options::geoDragScrollButton)
 	{
 		stopScrolling(action);
 	}
 	// Check for errors
-	if (lat == lat && lon == lon)
+	if (converted)
 	{
 		InteractiveSurface::mouseRelease(action, state);
+	}
+}
+
+/**
+ * Handles globe zooming through mouse wheel
+ * @param action Pointer to an action.
+ * @param state State that the action handlers belong to.
+ */
+void Globe::mouseWheel(Action *action, State *state)
+{
+	SDL_Event *ev = action->getDetails();
+	if (ev->type == SDL_MOUSEWHEEL)
+	{
+		if (ev->wheel.y > 0)
+		{
+			zoomIn();
+		}
+		else
+		{
+			zoomOut();
+		}
 	}
 }
 
@@ -1726,17 +1871,8 @@ void Globe::mouseRelease(Action *action, State *state)
  */
 void Globe::mouseClick(Action *action, State *state)
 {
-	if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP)
-	{
-		zoomIn();
-	}
-	else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN)
-	{
-		zoomOut();
-	}
-
 	double lon, lat;
-	cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
+	bool converted = cartToPolar((Sint16)floor(action->getAbsoluteXMouse()), (Sint16)floor(action->getAbsoluteYMouse()), &lon, &lat);
 
 	// The following is the workaround for a rare problem where sometimes
 	// the mouse-release event is missed for any reason.
@@ -1745,7 +1881,7 @@ void Globe::mouseClick(Action *action, State *state)
 	if (_isMouseScrolling)
 	{
 		if (action->getDetails()->button.button != Options::geoDragScrollButton
-			&& 0 == (SDL_GetMouseState(0, 0)&SDL_BUTTON(Options::geoDragScrollButton)))
+			&& 0 == (CrossPlatform::getPointerState(0, 0)&SDL_BUTTON(Options::geoDragScrollButton)))
 		{ // so we missed again the mouse-release :(
 			// Check if we have to revoke the scrolling, because it was too short in time, so it was a click
 			if ((!_mouseMovedOverThreshold) && ((int)(SDL_GetTicks() - _mouseScrollingStartTime) <= (Options::dragScrollTimeTolerance)))
@@ -1781,7 +1917,7 @@ void Globe::mouseClick(Action *action, State *state)
 	}
 
 	// Check for errors
-	if (lat == lat && lon == lon)
+	if (converted)
 	{
 		InteractiveSurface::mouseClick(action, state);
 		if (action->getDetails()->button.button == SDL_BUTTON_RIGHT)
@@ -1909,8 +2045,39 @@ void Globe::setupRadii(int width, int height)
  */
 void Globe::stopScrolling(Action *action)
 {
-	SDL_WarpMouse(_xBeforeMouseScrolling, _yBeforeMouseScrolling);
+#ifndef __MOBILE__
+	/* FIXME: Still doesn't work as intended */
+	SDL_WarpMouseInWindow(NULL, _xBeforeMouseScrolling, _yBeforeMouseScrolling);
 	action->setMouseAction(_xBeforeMouseScrolling, _yBeforeMouseScrolling, getX(), getY());
+#else
+	//Log(LOG_INFO) << "Globe.cpp: stopScrolling(): setting mouse to " << _xBeforeMouseScrolling << ", " << _yBeforeMouseScrolling;
+	action->setMouseAction(_xBeforeMouseScrolling, _yBeforeMouseScrolling, getX(), getY());
+	/* action->getDetails()->motion.x = _xBeforeMouseScrolling; action->getDetails()->motion.y = _yBeforeMouseScrolling;
+	_game->getCursor()->handle(action); */
+#endif
+}
+
+/**
+ * Pinch-to-zoom the globe
+ */
+void Globe::multiGesture(Action *action, State *state)
+{
+	static double accumulatedPinch;
+	double pinchVal = action->getDetails()->mgesture.dDist;
+	const double distThreshold = 0.03;
+	accumulatedPinch += pinchVal;
+	if (fabs(accumulatedPinch) > distThreshold)
+	{
+		  if(accumulatedPinch > 0)
+		  {
+			zoomIn();
+		  }
+		  else
+		  {
+			zoomOut();
+		  }
+		  accumulatedPinch = 0;
+	}
 }
 
 void Globe::setCraftRange(double lon, double lat, double range)

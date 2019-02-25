@@ -25,8 +25,10 @@ namespace OpenXcom
 /**
  * Initializes an alien base
  */
-AlienBase::AlienBase(AlienDeployment *deployment) : Target(), _inBattlescape(false), _discovered(false), _deployment(deployment)
+AlienBase::AlienBase(AlienDeployment *deployment, int startMonth) : Target(), _inBattlescape(false), _discovered(false), _deployment(deployment), _startMonth(startMonth), _genMissionCount(0)
 {
+	// allow spawning hunt missions immediately after the base is created, i.e. no initial delay
+	_minutesSinceLastHuntMissionGeneration = _deployment->getHuntMissionMaxFrequency();
 }
 
 /**
@@ -43,9 +45,13 @@ AlienBase::~AlienBase()
 void AlienBase::load(const YAML::Node &node)
 {
 	Target::load(node);
+	_pactCountry = node["pactCountry"].as<std::string>(_pactCountry);
 	_race = node["race"].as<std::string>(_race);
 	_inBattlescape = node["inBattlescape"].as<bool>(_inBattlescape);
 	_discovered = node["discovered"].as<bool>(_discovered);
+	_startMonth = node["startMonth"].as<int>(_startMonth);
+	_minutesSinceLastHuntMissionGeneration = node["minutesSinceLastHuntMissionGeneration"].as<int>(_minutesSinceLastHuntMissionGeneration);
+	_genMissionCount = node["genMissionCount"].as<int>(_genMissionCount);
 }
 
 /**
@@ -55,12 +61,16 @@ void AlienBase::load(const YAML::Node &node)
 YAML::Node AlienBase::save() const
 {
 	YAML::Node node = Target::save();
+	node["pactCountry"] = _pactCountry;
 	node["race"] = _race;
 	if (_inBattlescape)
 		node["inBattlescape"] = _inBattlescape;
 	if (_discovered)
 		node["discovered"] = _discovered;
 	node["deployment"] = _deployment->getType();
+	node["startMonth"] = _startMonth;
+	node["minutesSinceLastHuntMissionGeneration"] = _minutesSinceLastHuntMissionGeneration;
+	node["genMissionCount"] = _genMissionCount;
 	return node;
 }
 
@@ -83,6 +93,24 @@ int AlienBase::getMarker() const
 	if (!_discovered)
 		return -1;
 	return _deployment->getMarkerIcon();
+}
+
+/**
+ * Returns the country this base has a pact with.
+ * @return Country ID.
+ */
+const std::string &AlienBase::getPactCountry() const
+{
+	return _pactCountry;
+}
+
+/**
+ * Changes the country that has a pact with this alien base.
+ * @param pactCountry Country ID.
+ */
+void AlienBase::setPactCountry(const std::string &pactCountry)
+{
+	_pactCountry = pactCountry;
 }
 
 /**
@@ -142,6 +170,50 @@ void AlienBase::setDiscovered(bool discovered)
 AlienDeployment *AlienBase::getDeployment() const
 {
 	return _deployment;
+}
+
+void AlienBase::setDeployment(AlienDeployment *deployment)
+{
+	_deployment = deployment;
+
+	// allow spawning hunt missions immediately after the base is upgraded, i.e. no initial delay
+	_minutesSinceLastHuntMissionGeneration = _deployment->getHuntMissionMaxFrequency();
+}
+
+/**
+ * Gets the number of minutes passed since the last hunt mission was generated.
+ * @return Number of minutes.
+ */
+int AlienBase::getMinutesSinceLastHuntMissionGeneration() const
+{
+	return _minutesSinceLastHuntMissionGeneration;
+}
+
+/**
+ * Sets the number of minutes passed since the last hunt mission was generated.
+ * @param newValue Number of minutes.
+ */
+void AlienBase::setMinutesSinceLastHuntMissionGeneration(int newValue)
+{
+	_minutesSinceLastHuntMissionGeneration = newValue;
+}
+
+/**
+ * Gets the number of genMissions generated so far by this base.
+ * @return Number of missions.
+ */
+int AlienBase::getGenMissionCount() const
+{
+	return _genMissionCount;
+}
+
+/**
+ * Sets the number of genMissions generated so far by this base.
+ * @param newValue Number of missions.
+ */
+void AlienBase::setGenMissionCount(int newValue)
+{
+	_genMissionCount = newValue;
 }
 
 }

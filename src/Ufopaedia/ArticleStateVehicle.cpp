@@ -37,9 +37,13 @@ namespace OpenXcom
 
 	ArticleStateVehicle::ArticleStateVehicle(ArticleDefinitionVehicle *defs) : ArticleState(defs->id)
 	{
-		Unit *unit = _game->getMod()->getUnit(defs->id, true);
-		Armor *armor = _game->getMod()->getArmor(unit->getArmor(), true);
 		RuleItem *item = _game->getMod()->getItem(defs->id, true);
+		Unit *unit = item->getVehicleUnit();
+		if (!unit)
+		{
+			throw Exception("Item " + defs->id + " do not have vehicle unit defined");
+		}
+		Armor *armor = unit->getArmor();
 
 		// add screen elements
 		_txtTitle = new Text(310, 17, 5, 23);
@@ -47,7 +51,14 @@ namespace OpenXcom
 		_lstStats = new TextList(300, 89, 10, 48);
 
 		// Set palette
-		setPalette("PAL_UFOPAEDIA");
+		if (defs->customPalette)
+		{
+			setCustomPalette(_game->getMod()->getSurface(defs->image_id)->getPalette(), Mod::UFOPAEDIA_CURSOR);
+		}
+		else
+		{
+			setPalette("PAL_UFOPAEDIA");
+		}
 
 		ArticleState::initLayout();
 
@@ -57,7 +68,14 @@ namespace OpenXcom
 		add(_lstStats);
 
 		// Set up objects
-		_game->getMod()->getSurface("BACK10.SCR")->blit(_bg);
+		if (!defs->image_id.empty())
+		{
+			_game->getMod()->getSurface(defs->image_id)->blitNShade(_bg, 0, 0);
+		}
+		else
+		{
+			_game->getMod()->getSurface("BACK10.SCR")->blitNShade(_bg, 0, 0);
+		}
 		_btnOk->setColor(Palette::blockOffset(5));
 		_btnPrev->setColor(Palette::blockOffset(5));
 		_btnNext->setColor(Palette::blockOffset(5));
@@ -67,6 +85,7 @@ namespace OpenXcom
 		_txtTitle->setText(tr(defs->title));
 
 		_txtInfo->setColor(Palette::blockOffset(15)-1);
+		_txtInfo->setSecondaryColor(Palette::blockOffset(15) + 4);
 		_txtInfo->setWordWrap(true);
 		_txtInfo->setText(tr(defs->text));
 
@@ -87,11 +106,11 @@ namespace OpenXcom
 		_lstStats->addRow(2, tr("STR_FRONT_ARMOR").c_str(), ss3.str().c_str());
 
 		std::ostringstream ss4;
-		ss4 << armor->getSideArmor();
+		ss4 << armor->getLeftSideArmor();
 		_lstStats->addRow(2, tr("STR_LEFT_ARMOR").c_str(), ss4.str().c_str());
 
 		std::ostringstream ss5;
-		ss5 << armor->getSideArmor();
+		ss5 << armor->getRightSideArmor();
 		_lstStats->addRow(2, tr("STR_RIGHT_ARMOR").c_str(), ss5.str().c_str());
 
 		std::ostringstream ss6;
@@ -104,9 +123,9 @@ namespace OpenXcom
 
 		_lstStats->addRow(2, tr("STR_WEAPON").c_str(), tr(defs->weapon).c_str());
 
-		if (!item->getCompatibleAmmo()->empty())
+		if (!item->getPrimaryCompatibleAmmo()->empty())
 		{
-			RuleItem *ammo = _game->getMod()->getItem(item->getCompatibleAmmo()->front(), true);
+			RuleItem *ammo = _game->getMod()->getItem(item->getPrimaryCompatibleAmmo()->front(), true);
 
 			std::ostringstream ss8;
 			ss8 << ammo->getPower();

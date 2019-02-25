@@ -40,13 +40,23 @@ public:
 	~Palette();
 	/// Loads the colors from an X-Com palette.
 	void loadDat(const std::string &filename, int ncolors, int offset = 0);
+	/// Initializes an all-black palette.
+	void initBlack();
+	/// Loads the colors from an existing palette.
+	void copyFrom(const Palette *srcPal);
 	// Gets a certain color from the palette.
 	SDL_Color *getColors(int offset = 0) const;
+	// Gets a number of colors in the palette.
+	int getColorCount() const { return _count; }
 
 	void savePal(const std::string &file) const;
+	void savePalMod(const std::string &file, const std::string &type, const std::string &target) const;
+	void savePalJasc(const std::string &file) const;
 	void setColors(SDL_Color* pal, int ncolors);
+	void setColor(int index, int r, int g, int b);
+	void copyColor(int index, int r, int g, int b);
 	/// Converts a given color into a RGBA color value.
-	static Uint32 getRGBA(SDL_Color* pal, Uint8 color);
+	static Uint32 getRGBA(const SDL_Color* pal, Uint8 color);
 	/// Gets the position of a given palette.
 	/**
 	 * Returns the position of a palette inside an X-Com palette file (each is a 768-byte chunks).

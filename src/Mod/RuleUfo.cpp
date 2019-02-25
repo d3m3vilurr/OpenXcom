@@ -18,7 +18,7 @@
  */
 #include "RuleUfo.h"
 #include "RuleTerrain.h"
-#include "../Mod/Mod.h"
+#include "Mod.h"
 
 namespace OpenXcom
 {
@@ -28,9 +28,17 @@ namespace OpenXcom
  * type of UFO.
  * @param type String defining the type.
  */
-RuleUfo::RuleUfo(const std::string &type) : _type(type), _size("STR_VERY_SMALL"), _sprite(-1), _marker(-1), _markerLand(-1), _markerCrash(-1), _damageMax(0), _speedMax(0),
-											_power(0), _range(0), _score(0), _reload(0), _breakOffTime(0), _sightRange(268), _missionScore(1), _battlescapeTerrainData(0)
+RuleUfo::RuleUfo(const std::string &type) :
+	_type(type), _size("STR_VERY_SMALL"), _sprite(-1), _marker(-1), _markerLand(-1), _markerCrash(-1),
+	_power(0), _range(0), _score(0), _reload(0), _breakOffTime(0), _missionScore(1),
+	_hunterKillerPercentage(0), _huntMode(0), _huntSpeed(100), _huntBehavior(2),
+	_missilePower(0),
+	_fireSound(-1), _alertSound(-1),
+	_battlescapeTerrainData(0), _stats(), _statsRaceBonus()
 {
+	_stats.sightRange = 268;
+	_stats.radarRange = 672; // same default as in RuleCraft (used by hunter-killers)
+	_statsRaceBonus[""] = RuleUfoStats();
 }
 
 /**
@@ -48,6 +56,10 @@ RuleUfo::~RuleUfo()
  */
 void RuleUfo::load(const YAML::Node &node, Mod *mod)
 {
+	if (const YAML::Node &parent = node["refNode"])
+	{
+		load(parent, mod);
+	}
 	_type = node["type"].as<std::string>(_type);
 	_size = node["size"].as<std::string>(_size);
 	_sprite = node["sprite"].as<int>(_sprite);
@@ -63,15 +75,20 @@ void RuleUfo::load(const YAML::Node &node, Mod *mod)
 	{
 		_markerCrash = mod->getOffset(node["markerCrash"].as<int>(_markerCrash), 8);
 	}
-	_damageMax = node["damageMax"].as<int>(_damageMax);
-	_speedMax = node["speedMax"].as<int>(_speedMax);
 	_power = node["power"].as<int>(_power);
 	_range = node["range"].as<int>(_range);
 	_score = node["score"].as<int>(_score);
 	_reload = node["reload"].as<int>(_reload);
 	_breakOffTime = node["breakOffTime"].as<int>(_breakOffTime);
-	_sightRange = node["sightRange"].as<int>(_sightRange);
 	_missionScore = node["missionScore"].as<int>(_missionScore);
+	_hunterKillerPercentage = node["hunterKillerPercentage"].as<int>(_hunterKillerPercentage);
+	_huntMode = node["huntMode"].as<int>(_huntMode);
+	_huntSpeed = node["huntSpeed"].as<int>(_huntSpeed);
+	_huntBehavior = node["huntBehavior"].as<int>(_huntBehavior);
+	_missilePower = node["missilePower"].as<int>(_missilePower);
+
+	_stats.load(node);
+
 	if (const YAML::Node &terrain = node["battlescapeTerrainData"])
 	{
 		if (_battlescapeTerrainData)
@@ -81,6 +98,22 @@ void RuleUfo::load(const YAML::Node &node, Mod *mod)
 		_battlescapeTerrainData = rule;
 	}
 	_modSprite = node["modSprite"].as<std::string>(_modSprite);
+	if (const YAML::Node &raceBonus = node["raceBonus"])
+	{
+		for (YAML::const_iterator i = raceBonus.begin(); i != raceBonus.end(); ++i)
+		{
+			_statsRaceBonus[i->first.as<std::string>()].load(i->second);
+		}
+	}
+
+	if (node["fireSound"])
+	{
+		_fireSound = mod->getSoundOffset(node["fireSound"].as<int>(_fireSound), "GEO.CAT");
+	}
+	if (node["alertSound"])
+	{
+		_alertSound = mod->getSoundOffset(node["alertSound"].as<int>(_alertSound), "GEO.CAT");
+	}
 }
 
 /**
@@ -88,7 +121,7 @@ void RuleUfo::load(const YAML::Node &node, Mod *mod)
  * this UFO. Each UFO type has a unique name.
  * @return The Ufo's name.
  */
-std::string RuleUfo::getType() const
+const std::string &RuleUfo::getType() const
 {
 	return _type;
 }
@@ -97,7 +130,7 @@ std::string RuleUfo::getType() const
  * Gets the size of this type of UFO.
  * @return The Ufo's size.
  */
-std::string RuleUfo::getSize() const
+const std::string &RuleUfo::getSize() const
 {
 	return _size;
 }
@@ -170,26 +203,6 @@ int RuleUfo::getCrashMarker() const
 }
 
 /**
- * Gets the maximum damage (damage the UFO can take)
- * of the UFO.
- * @return The maximum damage.
- */
-int RuleUfo::getMaxDamage() const
-{
-	return _damageMax;
-}
-
-/**
- * Gets the maximum speed of the UFO flying
- * around the Geoscape.
- * @return The maximum speed.
- */
-int RuleUfo::getMaxSpeed() const
-{
-	return _speedMax;
-}
-
-/**
  * Gets the maximum damage done by the
  * UFO's weapons per shot.
  * @return The weapon power.
@@ -247,22 +260,59 @@ int RuleUfo::getBreakOffTime() const
 }
 
 /**
+ * Gets the UFO's fire sound.
+ * @return The fire sound ID.
+ */
+int RuleUfo::getFireSound() const
+{
+	return _fireSound;
+}
+
+/**
+ * Gets the UFO's alert sound.
+ * @return The alert sound ID.
+ */
+int RuleUfo::getAlertSound() const
+{
+	return _alertSound;
+}
+
+/**
  * For user-defined UFOs, use a surface for the "preview" image.
  * @return The name of the surface that represents this UFO.
  */
-std::string RuleUfo::getModSprite() const
+const std::string &RuleUfo::getModSprite() const
 {
 	return _modSprite;
 }
 
 /**
- * Gets the UFO's radar range
- * for detecting bases.
- * @return The range in nautical miles.
+ * Gets basic statistic of UFO.
+ * @return Basic stats of UFO.
  */
-int RuleUfo::getSightRange() const
+const RuleUfoStats& RuleUfo::getStats() const
 {
-	return _sightRange;
+	return _stats;
+}
+
+
+/**
+ * Gets bonus statistic of UFO based on race.
+ * @param s Race name.
+ * @return Bonus stats.
+ */
+const RuleUfoStats& RuleUfo::getRaceBonus(const std::string& s) const
+{
+	std::map<std::string, RuleUfoStats>::const_iterator i = _statsRaceBonus.find(s);
+	if (i != _statsRaceBonus.end())
+		return i->second;
+	else
+		return _statsRaceBonus.find("")->second;
+}
+
+const std::map<std::string, RuleUfoStats> &RuleUfo::getRaceBonusRaw() const
+{
+	return _statsRaceBonus;
 }
 
 /**
@@ -273,6 +323,42 @@ int RuleUfo::getSightRange() const
 int RuleUfo::getMissionScore() const
 {
 	return _missionScore;
+}
+
+/**
+ * Gets the UFO's chance to become a hunter-killer.
+ * @return Percentage to become a hunter-killer.
+ */
+int RuleUfo::getHunterKillerPercentage() const
+{
+	return _hunterKillerPercentage;
+}
+
+/**
+ * Gets the UFO's hunting preferences.
+ * @return Hunt mode ID.
+ */
+int RuleUfo::getHuntMode() const
+{
+	return _huntMode;
+}
+
+/**
+ * Gets the UFO's hunting speed (in percent of maximum speed).
+ * @return Percentage of maximum speed.
+ */
+int RuleUfo::getHuntSpeed() const
+{
+	return _huntSpeed;
+}
+
+/**
+ * Gets the UFO's hunting behavior (normal, kamikaze or random).
+ * @return Hunt behavior ID.
+ */
+int RuleUfo::getHuntBehavior() const
+{
+	return _huntBehavior;
 }
 
 }

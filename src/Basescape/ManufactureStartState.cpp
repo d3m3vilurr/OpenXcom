@@ -25,8 +25,10 @@
 #include "../Engine/Game.h"
 #include "../Engine/LocalizedText.h"
 #include "../Engine/Options.h"
+#include "../Menu/ErrorMessageState.h"
 #include "../Engine/Unicode.h"
 #include "../Mod/Mod.h"
+#include "../Mod/RuleItem.h"
 #include "../Mod/RuleManufacture.h"
 #include "../Savegame/Base.h"
 #include "../Savegame/ItemContainer.h"
@@ -99,10 +101,10 @@ ManufactureStartState::ManufactureStartState(Base *base, RuleManufacture *item) 
 	_btnCancel->onMouseClick((ActionHandler)&ManufactureStartState::btnCancelClick);
 	_btnCancel->onKeyboardPress((ActionHandler)&ManufactureStartState::btnCancelClick, Options::keyCancel);
 
-	const std::map<std::string, int> & requiredItems (_item->getRequiredItems());
-	int availableWorkSpace = _base->getFreeWorkshops();
 	bool productionPossible = _game->getSavedGame()->getFunds() > _item->getManufactureCost();
-	productionPossible &= (availableWorkSpace > 0);
+	// check available workspace later
+	//int availableWorkSpace = _base->getFreeWorkshops();
+	//productionPossible &= (availableWorkSpace > 0);
 
 	_txtRequiredItemsTitle->setText(tr("STR_SPECIAL_MATERIALS_REQUIRED"));
 	_txtRequiredItemsTitle->setAlign(ALIGN_CENTER);
@@ -120,37 +122,93 @@ ManufactureStartState::ManufactureStartState(Base *base, RuleManufacture *item) 
 	_lstRequiredItems->setBackground(_window);
 
 	int row = 0;
-	for (std::map<std::string, int>::const_iterator iter = requiredItems.begin();
-		iter != requiredItems.end();
-		++iter)
+	for (auto& iter : _item->getRequiredCrafts())
 	{
+		auto count = base->getCraftCountForProduction(iter.first);
+
 		std::ostringstream s1, s2;
-		s1 << iter->second;
-		if (_game->getMod()->getItem(iter->first) != 0)
-		{
-			s2 << base->getStorageItems()->getItem(iter->first);
-			productionPossible &= (base->getStorageItems()->getItem(iter->first) >= iter->second);
-		}
-		else if (_game->getMod()->getCraft(iter->first) != 0)
-		{
-			s2 << base->getCraftCount(iter->first);
-			productionPossible &= (base->getCraftCount(iter->first) >= iter->second);
-		}
-		_lstRequiredItems->addRow(3, tr(iter->first).c_str(), s1.str().c_str(), s2.str().c_str());
+		s1 << iter.second;
+		s2 << count;
+		productionPossible &= (count >= iter.second);
+		_lstRequiredItems->addRow(3, tr(iter.first->getType()).c_str(), s1.str().c_str(), s2.str().c_str());
 		_lstRequiredItems->setCellColor(row, 1, _lstRequiredItems->getSecondaryColor());
 		_lstRequiredItems->setCellColor(row, 2, _lstRequiredItems->getSecondaryColor());
 		row++;
 	}
-	_txtRequiredItemsTitle->setVisible(!requiredItems.empty());
-	_txtItemNameColumn->setVisible(!requiredItems.empty());
-	_txtUnitRequiredColumn->setVisible(!requiredItems.empty());
-	_txtUnitAvailableColumn->setVisible(!requiredItems.empty());
-	_lstRequiredItems->setVisible(!requiredItems.empty());
+	for (auto& iter : _item->getRequiredItems())
+	{
+		auto count = base->getStorageItems()->getItem(iter.first->getType());
+
+		std::ostringstream s1, s2;
+		s1 << iter.second;
+		s2 << count;
+		productionPossible &= (count >= iter.second);
+		_lstRequiredItems->addRow(3, tr(iter.first->getType()).c_str(), s1.str().c_str(), s2.str().c_str());
+		_lstRequiredItems->setCellColor(row, 1, _lstRequiredItems->getSecondaryColor());
+		_lstRequiredItems->setCellColor(row, 2, _lstRequiredItems->getSecondaryColor());
+		row++;
+	}
+	if (_item->getSpawnedPersonType() != "")
+	{
+		if (base->getAvailableQuarters() <= base->getUsedQuarters())
+		{
+			productionPossible = false;
+		}
+
+		// separator line
+		_lstRequiredItems->addRow(1, tr("STR_PERSON_JOINING").c_str());
+		_lstRequiredItems->setCellColor(row, 0, _lstRequiredItems->getSecondaryColor());
+		row++;
+
+		// person joining
+		std::ostringstream s1;
+		s1 << Unicode::TOK_COLOR_FLIP << 1;
+		_lstRequiredItems->addRow(2, tr(_item->getSpawnedPersonName() != "" ? _item->getSpawnedPersonName() : _item->getSpawnedPersonType()).c_str(), s1.str().c_str());
+		row++;
+	}
+	if (!_item->getRandomProducedItems().empty())
+	{
+		// separator line
+		_lstRequiredItems->addRow(1, tr("STR_RANDOM_PRODUCTION_DISCLAIMER").c_str());
+		_lstRequiredItems->setCellColor(row, 0, _lstRequiredItems->getSecondaryColor());
+		row++;
+	}
+	if (!_item->getProducedItems().empty())
+	{
+		// separator line
+		_lstRequiredItems->addRow(1, tr("STR_UNITS_PRODUCED").c_str());
+		_lstRequiredItems->setCellColor(row, 0, _lstRequiredItems->getSecondaryColor());
+		row++;
+
+		// produced items
+		for (auto& iter : _item->getProducedItems())
+		{
+			std::ostringstream s1;
+			s1 << Unicode::TOK_COLOR_FLIP << iter.second;
+			_lstRequiredItems->addRow(2, tr(iter.first->getType()).c_str(), s1.str().c_str());
+			row++;
+		}
+	}
+
+	_txtRequiredItemsTitle->setVisible(row);
+	_txtItemNameColumn->setVisible(row);
+	_txtUnitRequiredColumn->setVisible(row);
+	_txtUnitAvailableColumn->setVisible(row);
+	_lstRequiredItems->setVisible(row);
 
 	_btnStart->setText(tr("STR_START_PRODUCTION"));
 	_btnStart->onMouseClick((ActionHandler)&ManufactureStartState::btnStartClick);
 	_btnStart->onKeyboardPress((ActionHandler)&ManufactureStartState::btnStartClick, Options::keyOk);
 	_btnStart->setVisible(productionPossible);
+
+	if (_item)
+	{
+		// mark new as normal
+		if (_game->getSavedGame()->getManufactureRuleStatus(_item->getName()) == RuleManufacture::MANU_STATUS_NEW)
+		{
+			_game->getSavedGame()->setManufactureRuleStatus(_item->getName(), RuleManufacture::MANU_STATUS_NORMAL);
+		}
+	}
 }
 
 /**
@@ -168,7 +226,7 @@ void ManufactureStartState::btnCancelClick(Action *)
  */
 void ManufactureStartState::btnStartClick(Action *)
 {
-	if (_item->getCategory() == "STR_CRAFT" && _base->getAvailableHangars() - _base->getUsedHangars() <= 0)
+	if (_item->getProducedCraft() && _base->getAvailableHangars() - _base->getUsedHangars() <= 0)
 	{
 		_game->pushState(new ErrorMessageState(tr("STR_NO_FREE_HANGARS_FOR_CRAFT_PRODUCTION"), _palette, _game->getMod()->getInterface("basescape")->getElement("errorMessage")->color, "BACK17.SCR", _game->getMod()->getInterface("basescape")->getElement("errorPalette")->color));
 	}

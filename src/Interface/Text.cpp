@@ -35,7 +35,7 @@ namespace OpenXcom
  * @param x X position in pixels.
  * @param y Y position in pixels.
  */
-Text::Text(int width, int height, int x, int y) : InteractiveSurface(width, height, x, y), _big(0), _small(0), _font(0), _lang(0), _wrap(false), _invert(false), _contrast(false), _indent(false), _align(ALIGN_LEFT), _valign(ALIGN_TOP), _color(0), _color2(0)
+Text::Text(int width, int height, int x, int y) : InteractiveSurface(width, height, x, y), _big(0), _small(0), _font(0), _lang(0), _wrap(false), _invert(false), _contrast(false), _indent(false), _ignoreSeparators(false), _align(ALIGN_LEFT), _valign(ALIGN_TOP), _color(0), _color2(0)
 {
 }
 
@@ -122,13 +122,15 @@ std::string Text::getText() const
  * drawing area, otherwise they simply go off the edge.
  * @param wrap Wordwrapping setting.
  * @param indent Indent wrapped text.
+ * @param ignoreSeparators Handle separators as spaces (false) or as normal text (true)?
  */
-void Text::setWordWrap(bool wrap, bool indent)
+void Text::setWordWrap(bool wrap, bool indent, bool ignoreSeparators)
 {
-	if (wrap != _wrap || indent != _indent)
+	if (wrap != _wrap || indent != _indent || ignoreSeparators != _ignoreSeparators)
 	{
 		_wrap = wrap;
 		_indent = indent;
+		_ignoreSeparators = ignoreSeparators;
 		processText();
 	}
 }
@@ -333,7 +335,7 @@ void Text::processText()
 				font = _small;
 		}
 		// Keep track of spaces for wordwrapping
-		else if (Unicode::isSpace(str[c]) || Unicode::isSeparator(str[c]))
+		else if (Unicode::isSpace(str[c]) || (!_ignoreSeparators && Unicode::isSeparator(str[c])))
 		{
 			// Store existing indentation
 			if (c == textIndentation)
@@ -411,6 +413,23 @@ void Text::processText()
 	_redraw = true;
 }
 
+namespace
+{
+
+struct PaletteShift
+{
+	static inline void func(Uint8& dest, Uint8& src, int off, int mul, int mid)
+	{
+		if(src)
+		{
+			int inverseOffset = mid ? 2 * (mid - src) : 0;
+			dest = off + src * mul + inverseOffset;
+		}
+	}
+};
+
+} //namespace
+
 /**
  * Calculates the starting X position for a line of text.
  * @param line The line number (0 = first, etc).
@@ -451,23 +470,6 @@ int Text::getLineX(int line) const
 	}
 	return x;
 }
-
-namespace
-{
-
-struct PaletteShift
-{
-	static inline void func(Uint8& dest, Uint8& src, int off, int mul, int mid)
-	{
-		if (src)
-		{
-			int inverseOffset = mid ? 2 * (mid - src) : 0;
-			dest = off + src * mul + inverseOffset;
-		}
-	}
-};
-
-} //namespace
 
 /**
  * Draws all the characters in the text with a really
@@ -564,9 +566,9 @@ void Text::draw()
 		{
 			if (dir < 0)
 				x += dir * font->getCharSize(*c).w;
-			Surface* chr = font->getChar(*c);
-			chr->setX(x);
-			chr->setY(y);
+			auto chr = font->getChar(*c);
+			chr.setX(x);
+			chr.setY(y);
 			ShaderDraw<PaletteShift>(ShaderSurface(this, 0, 0), ShaderCrop(chr), ShaderScalar(color), ShaderScalar(mul), ShaderScalar(mid));
 			if (dir > 0)
 				x += dir * font->getCharSize(*c).w;

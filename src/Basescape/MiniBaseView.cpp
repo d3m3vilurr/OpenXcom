@@ -104,9 +104,7 @@ void MiniBaseView::draw()
 			r.h = MINI_SIZE + 2;
 			drawRect(&r, 1);
 		}
-		_texture->getFrame(41)->setX(i * (MINI_SIZE + 2));
-		_texture->getFrame(41)->setY(0);
-		_texture->getFrame(41)->blit(this);
+		_texture->getFrame(41)->blitNShade(this, i * (MINI_SIZE + 2), 0);
 
 		// Draw facilities
 		if (i < _bases->size())
@@ -116,7 +114,9 @@ void MiniBaseView::draw()
 			for (std::vector<BaseFacility*>::iterator f = _bases->at(i)->getFacilities()->begin(); f != _bases->at(i)->getFacilities()->end(); ++f)
 			{
 				int color;
-				if ((*f)->getBuildTime() == 0)
+				if ((*f)->getDisabled())
+					color = _blue;
+				else if ((*f)->getBuildTime() == 0)
 					color = _green;
 				else
 					color = _red;
@@ -166,6 +166,10 @@ void MiniBaseView::setColor(Uint8 color)
 void MiniBaseView::setSecondaryColor(Uint8 color)
 {
 	_red = color;
+}
+void MiniBaseView::setBorderColor(Uint8 color)
+{
+	_blue = color;
 }
 
 }

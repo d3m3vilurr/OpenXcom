@@ -16,13 +16,13 @@
  * You should have received a copy of the GNU General Public License
  * along with OpenXcom.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <fstream>
 #include "Camera.h"
 #include "Map.h"
 #include "../Engine/Action.h"
 #include "../Engine/Options.h"
 #include "../Engine/Timer.h"
 #include "../fmath.h"
+#include "../Engine/CrossPlatform.h"
 
 namespace OpenXcom
 {
@@ -73,13 +73,23 @@ void Camera::mousePress(Action *action, State *)
 		_scrollTrigger = true;
 		mouseOver(action, 0);
 	}
-	else if (Options::battleDragScrollButton != SDL_BUTTON_MIDDLE || (SDL_GetMouseState(0,0)&SDL_BUTTON(Options::battleDragScrollButton)) == 0)
+}
+
+/**
+ * Handles mousewheel shortcuts.
+ * @param action Pointer to an action.
+ * @param state State that the action handlers belong to.
+ */
+void Camera::mouseWheel(Action *action, State *)
+{
+	const SDL_Event &ev(*action->getDetails());
+	if (ev.type == SDL_MOUSEWHEEL)
 	{
-		if (action->getDetails()->button.button == SDL_BUTTON_WHEELUP)
+		if (ev.wheel.y > 0)
 		{
 			up();
 		}
-		else if (action->getDetails()->button.button == SDL_BUTTON_WHEELDOWN)
+		else
 		{
 			down();
 		}
@@ -209,7 +219,7 @@ void Camera::mouseOver(Action *action, State *)
 			_scrollMouseY = 0;
 		}
 
-		if ((_scrollMouseX || _scrollMouseY) && !_scrollMouseTimer->isRunning() && !_scrollKeyTimer->isRunning() && 0==(SDL_GetMouseState(0,0)&SDL_BUTTON(Options::battleDragScrollButton)))
+		if ((_scrollMouseX || _scrollMouseY) && !_scrollMouseTimer->isRunning() && !_scrollKeyTimer->isRunning() && 0==(CrossPlatform::getPointerState(0,0)&SDL_BUTTON(Options::battleDragScrollButton)))
 		{
 			_scrollMouseTimer->start();
 		}
@@ -251,7 +261,7 @@ void Camera::keyboardPress(Action *action, State *)
 		_scrollKeyY = -scrollSpeed;
 	}
 
-	if ((_scrollKeyX || _scrollKeyY) && !_scrollKeyTimer->isRunning() && !_scrollMouseTimer->isRunning() && 0==(SDL_GetMouseState(0,0)&SDL_BUTTON(Options::battleDragScrollButton)))
+	if ((_scrollKeyX || _scrollKeyY) && !_scrollKeyTimer->isRunning() && !_scrollMouseTimer->isRunning() && 0==(CrossPlatform::getPointerState(0,0)&SDL_BUTTON(Options::battleDragScrollButton)))
 	{
 		_scrollKeyTimer->start();
 	}
@@ -291,7 +301,7 @@ void Camera::keyboardRelease(Action *action, State *)
 		_scrollKeyY = 0;
 	}
 
-	if ((_scrollKeyX || _scrollKeyY) && !_scrollKeyTimer->isRunning() && !_scrollMouseTimer->isRunning() && 0==(SDL_GetMouseState(0,0)&SDL_BUTTON(Options::battleDragScrollButton)))
+	if ((_scrollKeyX || _scrollKeyY) && !_scrollKeyTimer->isRunning() && !_scrollMouseTimer->isRunning() && 0==(CrossPlatform::getPointerState(0,0)&SDL_BUTTON(Options::battleDragScrollButton)))
 	{
 		_scrollKeyTimer->start();
 	}
@@ -330,7 +340,11 @@ void Camera::scrollXY(int x, int y, bool redraw)
 
 	do
 	{
-		convertScreenToMap((_screenWidth / 2), (_visibleMapHeight / 2), &_center.x, &_center.y);
+		int xx = 0;
+		int yy = 0;
+		convertScreenToMap((_screenWidth / 2), (_visibleMapHeight / 2), &xx, &yy);
+		_center.x = xx;
+		_center.y = yy;
 
 		// Handling map bounds...
 		// Ok, this is a prototype, it should be optimized.
@@ -357,7 +371,11 @@ void Camera::jumpXY(int x, int y)
 {
 	_mapOffset.x += x;
 	_mapOffset.y += y;
-	convertScreenToMap((_screenWidth / 2), (_visibleMapHeight / 2), &_center.x, &_center.y);
+	int xx = 0;
+	int yy = 0;
+	convertScreenToMap((_screenWidth / 2), (_visibleMapHeight / 2), &xx, &yy);
+	_center.x = xx;
+	_center.y = yy;
 }
 
 
@@ -407,8 +425,8 @@ void Camera::centerOnPosition(Position mapPos, bool redraw)
 {
 	Position screenPos;
 	_center = mapPos;
-	_center.x = Clamp(_center.x, -1, _mapsize_x);
-	_center.y = Clamp(_center.y, -1, _mapsize_y);
+	_center.x = Clamp<int>(_center.x, -1, _mapsize_x);
+	_center.y = Clamp<int>(_center.y, -1, _mapsize_y);
 	convertMapToScreen(_center, &screenPos);
 
 	_mapOffset.x = -(screenPos.x - (_screenWidth / 2));
@@ -472,7 +490,7 @@ void Camera::convertMapToScreen(Position mapPos, Position *screenPos) const
  */
 void Camera::convertVoxelToScreen(Position voxelPos, Position *screenPos) const
 {
-	Position mapPosition = Position(voxelPos.x / 16, voxelPos.y / 16, voxelPos.z / 24);
+	Position mapPosition = voxelPos.toTile();
 	convertMapToScreen(mapPosition, screenPos);
 	double dx = voxelPos.x - (mapPosition.x * 16);
 	double dy = voxelPos.y - (mapPosition.y * 16);

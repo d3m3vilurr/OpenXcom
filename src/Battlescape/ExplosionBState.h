@@ -27,6 +27,7 @@ class BattlescapeGame;
 class BattleUnit;
 class BattleItem;
 class Tile;
+class RuleDamageType;
 
 /**
  * Explosion state not only handles explosions, but also bullet impacts!
@@ -35,25 +36,31 @@ class Tile;
 class ExplosionBState : public BattleState
 {
 private:
-	BattleUnit *_unit;
+	BattleActionAttack _attack;
 	Position _center;
-	BattleItem *_item;
+	const RuleDamageType *_damageType;
 	Tile *_tile;
+	BattleUnit *_targetPsiOrHit;
 	int _power;
-	bool _areaOfEffect, _lowerWeapon, _cosmetic;
+	int _radius;
+	int _range;
+	bool _areaOfEffect, _lowerWeapon, _hit, _psi;
+
 	/// Calculates the effects of the explosion.
 	void explode();
+	/// Set new value to reference if new value is not equal -1.
+	void optValue(int &oldValue, int newValue) const;
 public:
 	/// Creates a new ExplosionBState class.
-	ExplosionBState(BattlescapeGame *parent, Position center, BattleItem *item, BattleUnit *unit, Tile *tile = 0, bool lowerWeapon = false, bool cosmetic = false);
+	ExplosionBState(BattlescapeGame *parent, Position center, BattleActionAttack attack, Tile *tile = 0, bool lowerWeapon = false, int range = 0);
 	/// Cleans up the ExplosionBState.
 	~ExplosionBState();
 	/// Initializes the state.
-	void init();
+	void init() override;
 	/// Handles a cancel request.
-	void cancel();
+	void cancel() override;
 	/// Runs state functionality every cycle.
-	void think();
+	void think() override;
 
 };
 

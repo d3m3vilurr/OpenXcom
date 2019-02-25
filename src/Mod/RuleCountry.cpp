@@ -28,7 +28,7 @@ namespace OpenXcom
  * type of country.
  * @param type String defining the type.
  */
-RuleCountry::RuleCountry(const std::string &type) : _type(type), _fundingBase(0), _fundingCap(0), _labelLon(0.0), _labelLat(0.0)
+RuleCountry::RuleCountry(const std::string &type) : _type(type), _fundingBase(0), _fundingCap(0), _labelLon(0.0), _labelLat(0.0), _labelColor(0), _zoomLevel(0)
 {
 }
 
@@ -45,6 +45,10 @@ RuleCountry::~RuleCountry()
  */
 void RuleCountry::load(const YAML::Node &node)
 {
+	if (const YAML::Node &parent = node["refNode"])
+	{
+		load(parent);
+	}
 	_type = node["type"].as<std::string>(_type);
 	_fundingBase = node["fundingBase"].as<int>(_fundingBase);
 	_fundingCap = node["fundingCap"].as<int>(_fundingCap);
@@ -52,6 +56,8 @@ void RuleCountry::load(const YAML::Node &node)
 		_labelLon = Deg2Rad(node["labelLon"].as<double>());
 	if (node["labelLat"])
 		_labelLat = Deg2Rad(node["labelLat"].as<double>());
+	_labelColor = node["labelColor"].as<int>(_labelColor);
+	_zoomLevel = node["zoomLevel"].as<int>(_zoomLevel);
 	std::vector< std::vector<double> > areas;
 	areas = node["areas"].as< std::vector< std::vector<double> > >(areas);
 	for (size_t i = 0; i != areas.size(); ++i)
@@ -137,6 +143,25 @@ bool RuleCountry::insideCountry(double lon, double lat) const
 			return true;
 	}
 	return false;
+}
+
+/**
+ * Gets the country's label color.
+ * @return The color code.
+ */
+int RuleCountry::getLabelColor() const
+{
+	return _labelColor;
+}
+
+/**
+ * Gets the minimum zoom level required to display the label.
+ * Note: this works for extraGlobeLabels only, not for vanilla countries.
+ * @return The zoom level.
+ */
+int RuleCountry::getZoomLevel() const
+{
+	return _zoomLevel;
 }
 
 }

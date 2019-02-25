@@ -511,6 +511,7 @@ else ()
                           mikmod
                           SceHid_stub
                           SceCtrl_stub
+                          SceTouch_stub
                           SceGxm_stub
                           SceCommonDialog_stub
                           SceSysmodule_stub

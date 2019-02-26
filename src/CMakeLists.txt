@@ -528,31 +528,32 @@ if ( NOT PSP2 )
   target_link_libraries ( openxcom ${system_libs} ${SDLIMAGE_LIBRARY} ${SDLMIXER_LIBRARY} ${SDLGFX_LIBRARY} ${SDL_LIBRARY} ${OPENGL_LIBRARIES} debug ${YAMLCPP_LIBRARY_DEBUG} optimized ${YAMLCPP_LIBRARY} )
 else ()
   target_link_libraries ( ${PROJECT_NAME}
-                          ${system_libs}
-                          ${SDLIMAGE_LIBRARY}
-                          ${SDLMIXER_LIBRARY}
-                          ${SDLGFX_LIBRARY}
-                          ${SDL_LIBRARY}
-                          ${YAMLCPP_LIBRARY}
-                          archive
+                          #${system_libs}
                           c
-                          vita2d
-                          turbojpeg
-                          png
-                          ogg
-                          vorbis
-                          vorbisidec
+                          ${YAMLCPP_LIBRARY}
+                          ${SDL2_LIBRARIES}
+                          #${SDLGFX_LIBRARY}
+                          SDL2_gfx
+                          FLAC
                           vorbisfile
+                          vorbis
+                          ogg
+                          png
+                          archive
+                          z
+                          turbojpeg
+                          mpg123
                           mikmod
+                          vita2d
                           SceHid_stub
-                          SceCtrl_stub
                           SceTouch_stub
                           SceGxm_stub
                           SceCommonDialog_stub
                           SceSysmodule_stub
                           SceDisplay_stub
+                          SceCtrl_stub
                           SceAudio_stub
-                          z)
+                          )
 endif ()
 
 # Pack libraries into bundle and link executable appropriately

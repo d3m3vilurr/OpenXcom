@@ -90,7 +90,7 @@ Sint64 SDL_RWsize(SDL_RWops *src) {
 	return rv;
 }
 #endif
-#if 1 // our SDL2 does not have it
+#ifdef __ANDROID__ // our SDL2 does not have it
 void *SDL_LoadFile_RW(SDL_RWops *src, size_t *datasize, int freesrc)
 {
 	const int FILE_CHUNK_SIZE = 1024;

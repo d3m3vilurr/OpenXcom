@@ -422,8 +422,8 @@ void Game::run()
 							// Okay, if you got this event, this probably means that your window IS resizable.
 							//if (Options::allowResize)
 							{
-								Options::newDisplayWidth = Options::displayWidth = std::max(Screen::ORIGINAL_WIDTH, _event.window.data1);
-								Options::newDisplayHeight = Options::displayHeight = std::max(Screen::ORIGINAL_HEIGHT, _event.window.data2);
+								Options::newDisplayWidth = Options::displayWidth = std::max(Screen::ORIGINAL_WIDTH, (int)_event.window.data1);
+								Options::newDisplayHeight = Options::displayHeight = std::max(Screen::ORIGINAL_HEIGHT, (int)_event.window.data2);
 								int dX = 0, dY = 0;
 								Screen::updateScale(Options::battlescapeScale, Options::baseXBattlescape, Options::baseYBattlescape, false);
 								Screen::updateScale(Options::geoscapeScale, Options::baseXGeoscape, Options::baseYGeoscape, false);

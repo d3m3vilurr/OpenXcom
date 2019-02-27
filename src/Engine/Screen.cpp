@@ -50,7 +50,9 @@ const int Screen::ORIGINAL_HEIGHT = 200;
  */
 void Screen::makeVideoFlags()
 {
+#ifndef __NO_OPENGL
 	_flags = SDL_WINDOW_OPENGL;
+#endif
 	if (Options::allowResize)
 	{
 		_flags |= SDL_WINDOW_RESIZABLE;

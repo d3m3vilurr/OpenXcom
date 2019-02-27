@@ -67,20 +67,21 @@ void create()
 	_info.push_back(OptionInfo("fullscreen", &fullscreen, true));
 	_info.push_back(OptionInfo("asyncBlit", &asyncBlit, false));
 	_info.push_back(OptionInfo("keyboardMode", (int*)&keyboardMode, KEYBOARD_OFF));
-#else
-#ifdef __vita__
+#elif defined(__vita__)
 	_info.push_back(OptionInfo("displayWidth", &displayWidth, 960));
 	_info.push_back(OptionInfo("displayHeight", &displayHeight, 544));
+	_info.push_back(OptionInfo("fullscreen", &fullscreen, true));
+	_info.push_back(OptionInfo("asyncBlit", &asyncBlit, false));
+	_info.push_back(OptionInfo("keyboardMode", (int*)&keyboardMode, KEYBOARD_OFF));
 #else
 	_info.push_back(OptionInfo("displayWidth", &displayWidth, Screen::ORIGINAL_WIDTH*2));
 	_info.push_back(OptionInfo("displayHeight", &displayHeight, Screen::ORIGINAL_HEIGHT*2));
-#endif
 	_info.push_back(OptionInfo("fullscreen", &fullscreen, false));
 	_info.push_back(OptionInfo("asyncBlit", &asyncBlit, true));
 	_info.push_back(OptionInfo("keyboardMode", (int*)&keyboardMode, KEYBOARD_ON));
 #endif
 
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("maxFrameSkip", &maxFrameSkip, 0, "STR_FRAMESKIP", "STR_GENERAL"));
 #else
 	_info.push_back(OptionInfo("maxFrameSkip", &maxFrameSkip, 0));
@@ -112,13 +113,13 @@ void create()
 	_info.push_back(OptionInfo("uiVolume", &uiVolume, MIX_MAX_VOLUME/3));
 	_info.push_back(OptionInfo("language", &language, ""));
 	_info.push_back(OptionInfo("battleScrollSpeed", &battleScrollSpeed, 8));
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("battleEdgeScroll", (int*)&battleEdgeScroll, SCROLL_NONE));
 #else
 	_info.push_back(OptionInfo("battleEdgeScroll", (int*)&battleEdgeScroll, SCROLL_AUTO));
 #endif
 
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("battleDragScrollButton", &battleDragScrollButton, SDL_BUTTON_LEFT));
 #else
 	_info.push_back(OptionInfo("battleDragScrollButton", &battleDragScrollButton, 0));
@@ -128,7 +129,7 @@ void create()
 	_info.push_back(OptionInfo("battleFireSpeed", &battleFireSpeed, 6));
 	_info.push_back(OptionInfo("battleXcomSpeed", &battleXcomSpeed, 30));
 	_info.push_back(OptionInfo("battleAlienSpeed", &battleAlienSpeed, 30));
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("battleNewPreviewPath", (int*)&battleNewPreviewPath, PATH_FULL)); // for android, set full preview by default
 #else
 	_info.push_back(OptionInfo("battleNewPreviewPath", (int*)&battleNewPreviewPath, PATH_NONE)); // requires double-click to confirm moves
@@ -159,7 +160,7 @@ void create()
 	_info.push_back(OptionInfo("geoClockSpeed", &geoClockSpeed, 80));
 	_info.push_back(OptionInfo("dogfightSpeed", &dogfightSpeed, 30));
 	_info.push_back(OptionInfo("geoScrollSpeed", &geoScrollSpeed, 20));
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("geoDragScrollButton", &geoDragScrollButton, SDL_BUTTON_LEFT));
 #else
 	_info.push_back(OptionInfo("geoDragScrollButton", &geoDragScrollButton, SDL_BUTTON_MIDDLE));
@@ -168,7 +169,7 @@ void create()
 	_info.push_back(OptionInfo("preferredSound", (int*)&preferredSound, SOUND_AUTO));
 	_info.push_back(OptionInfo("preferredVideo", (int*)&preferredVideo, VIDEO_FMV));
 	_info.push_back(OptionInfo("musicAlwaysLoop", &musicAlwaysLoop, false));
-#ifdef __MOBILE
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("touchEnabled", &touchEnabled, true));
 #else
 	_info.push_back(OptionInfo("touchEnabled", &touchEnabled, false));
@@ -190,7 +191,7 @@ void create()
 	_info.push_back(OptionInfo("soldierDiaries", &soldierDiaries, true));
 
 // this should probably be any small screen touch-device, i don't know the defines for all of them so i'll cover android and IOS as i imagine they're more common
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("maximizeInfoScreens", &maximizeInfoScreens, true, "STR_MAXIMIZE_INFO_SCREENS", "STR_GENERAL"));
 #elif __APPLE__
 	// todo: ask grussel how badly i messed this up.
@@ -203,7 +204,7 @@ void create()
 #else
 	_info.push_back(OptionInfo("maximizeInfoScreens", &maximizeInfoScreens, false, "STR_MAXIMIZE_INFO_SCREENS", "STR_GENERAL"));
 #endif
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("listDragScroll", &listDragScroll, true, "STR_LISTDRAGSCROLL", "STR_GENERAL"));
 #else
 	_info.push_back(OptionInfo("listDragScroll", &listDragScroll, false, "STR_LISTDRAGSCROLL", "STR_GENERAL"));
@@ -222,13 +223,14 @@ void create()
 	_info.push_back(OptionInfo("retainCorpses", &retainCorpses, false, "STR_RETAINCORPSES", "STR_GEOSCAPE"));
 	_info.push_back(OptionInfo("fieldPromotions", &fieldPromotions, false, "STR_FIELDPROMOTIONS", "STR_GEOSCAPE"));
 	//_info.push_back(OptionInfo("meetingPoint", &meetingPoint, false, "STR_MEETINGPOINT", "STR_GEOSCAPE"));
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
+	_info.push_back(OptionInfo("listDragScroll", &listDragScroll, true, "STR_LISTDRAGSCROLL", "STR_GENERAL"));
 	_info.push_back(OptionInfo("dragSoldierReorder", &dragSoldierReorder, true, "STR_DRAGREORDER", "STR_GEOSCAPE"));
 #else
 	_info.push_back(OptionInfo("dragSoldierReorder", &dragSoldierReorder, false, "STR_DRAGREORDER", "STR_GEOSCAPE"));
 #endif
 
-#if defined(__MOBILE__) || defined (__PSEUDO_ANDROID__)
+#if defined(__MOBILE__) || defined (__PSEUDO_ANDROID__) || defined(__vita__)
 	_info.push_back(OptionInfo("swipeToTurn", &swipeToTurn, true, "STR_SWIPE", "STR_BATTLESCAPE")); // These first two options are specific to Android;
 	_info.push_back(OptionInfo("holdToTurn", &holdToTurn, true, "STR_HOLD", "STR_BATTLESCAPE"));    // they're moved here from a separate menu.
 #else
@@ -246,7 +248,7 @@ void create()
 	_info.push_back(OptionInfo("battleAutoEnd", &battleAutoEnd, false, "STR_BATTLEAUTOEND", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("battleSmoothCamera", &battleSmoothCamera, false, "STR_BATTLESMOOTHCAMERA", "STR_BATTLESCAPE"));
 	_info.push_back(OptionInfo("disableAutoEquip", &disableAutoEquip, false, "STR_DISABLEAUTOEQUIP", "STR_BATTLESCAPE"));
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("battleConfirmFireMode", &battleConfirmFireMode, true, "STR_BATTLECONFIRMFIREMODE", "STR_BATTLESCAPE"));
 #else
 	_info.push_back(OptionInfo("battleConfirmFireMode", &battleConfirmFireMode, false, "STR_BATTLECONFIRMFIREMODE", "STR_BATTLESCAPE"));
@@ -269,7 +271,7 @@ void create()
 	_info.push_back(OptionInfo("forceGLMode", &forceGLMode, true));
     _info.push_back(OptionInfo("mouseMode", &mouseMode, 0));
 	_info.push_back(OptionInfo("longPressDuration", &longPressDuration, 500));
-#ifdef __MOBILE__
+#if defined(__MOBILE__) || defined(__vita__)
 	_info.push_back(OptionInfo("showCursor", &showCursor, false));
 #else
 	_info.push_back(OptionInfo("showCursor", &showCursor, true));
